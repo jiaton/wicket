@@ -1,0 +1,68 @@
+# wicket.yaml — the only file you edit. Copy to `wicket.yaml` (git-ignored) and fill in.
+#
+# Everything here is compiled into the Worker's routes and plain-text variables at deploy
+# time (cf: cloudflare.config.ts reads it; wrangler: `npm run config:wrangler` writes
+# wrangler.jsonc from it). Secrets (passwords, tokens) are NOT in this file — see README.
+
+# The Cloudflare zone your hosts live in. Every host below must be inside it.
+zone: example.com
+
+# Optional. Defaults: worker name "wicket", site_name / cookie_domain = zone.
+# worker: wicket
+# site_name: example.com        # prefix of every notification
+# cookie_domain: example.com    # one login covers every host under this domain
+# cookie_days: 365
+
+# Hostnames the Worker runs on. Each must be a *proxied* (orange-cloud) DNS record,
+# typically a CNAME to your tunnel. Hosts not listed here are untouched.
+#
+#   gated    password page (+ API tokens); wrong passwords/tokens and probe bursts → ban
+#   observe  no password page; the app keeps its own login. wicket still enforces bans,
+#            catches scanners, and counts the app's failed logins via a recipe or watch rules.
+hosts:
+  nas.example.com: gated
+  docker.example.com: gated
+  photos.example.com:
+    mode: observe
+    recipe: immich
+  ha.example.com:
+    mode: observe
+    recipe: home-assistant
+  blog.example.com:
+    mode: observe
+    watch:
+      - { path: /api/unlock, methods: [POST], status: [401] }
+
+# Addresses (IPv4, IPv6 or IPv4 CIDR) that never see a password page — your home's public
+# IP, for example. From inside the house every host resolves to Cloudflare, so this is the
+# address wicket sees; listing it also means nobody at home can get the household banned.
+allow_ips: []
+#  - 203.0.113.7
+
+# "host/path-prefix" entries that pass without credentials (webhooks, native clients).
+bypass: []
+#  - nas.example.com/webhooks/
+
+# Ban triggers. Durations accept seconds or 30s / 10m / 24h / 7d.
+limits:
+  password: { count: 3, window: 24h }                   # wrong passwords/tokens per address
+  rotating: { count: 10, window: 10m, lockdown: 1h }    # failures from any address → pause logins
+  scanner: { count: 100, window: 60s }                  # anonymous probes per address
+  origin: { count: 5, window: 10m }                     # observe: matched failed logins per address
+
+# Cron alerts from the traffic analytics (need CF_API_TOKEN with Account Analytics: Read).
+alerts:
+  admin_hosts: []            # hosts whose use during quiet_hours is worth a message
+  quiet_hours: ""            # e.g. "1-6" (local hours, inclusive)
+  timezone: UTC
+  ip_requests: 300           # one address, requests in 5 min
+  ip_errors: 30              # one address, 4xx/5xx in 5 min
+  guess_ips: 3               # distinct addresses failing in 5 min
+
+cloudflare:
+  # cf deploy provisions a namespace on the first deploy when this is empty; wrangler needs
+  # the id of a namespace you created (`wrangler kv namespace create STORE`).
+  kv_namespace_id: ""
+  analytics_dataset: wicket_traffic
+  cron: "*/5 * * * *"            # alerts + notification digests
+  reconcile_cron: "17 * * * *"   # KV bans ↔ Cloudflare IP list

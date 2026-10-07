@@ -1,0 +1,26 @@
+{
+  "name": "wicket",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "One password and a ban list for everything you self-host behind a Cloudflare Tunnel. No Access, no fail2ban, no server.",
+  "license": "MIT",
+  "repository": "github:jiaton/wicket",
+  "scripts": {
+    "dev": "cf dev",
+    "deploy": "echo 'Do NOT run bare `cf deploy`: in cf 1.0.0-beta.5 it uploads a version with no secrets. Use `cf deploy --secrets-file secrets.json` (see README) or `npm run config:wrangler && npx wrangler deploy`.' >&2 && exit 1",
+    "config:wrangler": "node deploy/wrangler.ts",
+    "check": "tsc --noEmit && cf deploy --dry-run",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260929.1",
+    "@types/node": "^26.6.4",
+    "cf": "^1.0.0-beta.5",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2",
+    "wrangler": "^4.143.1",
+    "yaml": "^2.9.1"
+  }
+}

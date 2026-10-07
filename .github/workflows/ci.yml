@@ -1,0 +1,25 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      # Compiles wicket.example.yaml into a wrangler config, which exercises the loader end to end.
+      - name: compile the example config
+        run: |
+          cp wicket.example.yaml wicket.yaml
+          sed -i 's/kv_namespace_id: ""/kv_namespace_id: "0000"/' wicket.yaml
+          npm run config:wrangler

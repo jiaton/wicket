@@ -1,0 +1,60 @@
+# AGENTS.md — wicket
+
+Cloudflare Worker: one shared password (plus host-scoped API tokens) in front of self-hosted services on a Cloudflare Tunnel, with fail2ban-style bans at the edge, scanner detection, observe mode for apps with their own login, and notifications. `README.md` is the user-facing description; `docs/design.md` the positioning, the pipeline order, the modes and triggers, and the threat model. Read both first.
+
+## Layers (dependency direction: top → bottom only)
+
+```
+cloudflare.config.ts  cf CLI config, generated from wicket.yaml at evaluation time (no literals in here)
+deploy/               build-time only, runs in Node, never bundled: config.ts (YAML → validated config →
+                      vars/routes/crons), wrangler.ts (writes wrangler.jsonc)
+src/index.ts          Worker entry: fetch = pipeline, scheduled = the five-minute or the hourly job (by cron string)
+src/pipeline/         request handling as an ordered list of steps (handler.ts: STEPS)
+  context.ts          Ctx (everything a step may need), Deps (injected fetch + clock), Outcome, Step
+  endpoints.ts        /__wicket/login|logout|unban
+  observe.ts          observe mode: passthrough + watch rules + scanner
+  failures.ts         wrong password/token → counters → ban or 401
+  respond.ts          html()/json() helpers
+src/actions/ban.ts    the one exit for every ban trigger: KV + IP list + notification; lockdown
+src/store/            bans.ts (bans, counters, lockdown), locks.ts (job:* run-once locks) — every KV key, behind named functions
+src/notify/           events with severities → channels; adapters.ts has one function per channel type
+src/cron/             index.ts (jobs, run-once locks, request-path fallback tick), analyze.ts (Analytics Engine → alerts), reconcile.ts (KV bans ↔ IP list)
+src/cloudflare/       REST clients: lists.ts (IP list), analytics.ts (SQL)
+src/config/           parsing only: env.ts (field names), settings.ts (vars), hosts.ts (HOSTS_JSON), tokens.ts (API_TOKENS), channels.ts (NOTIFY_JSON)
+src/core/             pure functions, no I/O: crypto.ts, credentials.ts (carriers, cookie, CSRF), ip.ts, counters.ts
+src/recipes/          data: per-app watch rules
+src/ui/pages.ts       HTML pages
+tests/                vitest in plain Node; helpers.ts fakes KV, Analytics and the network
+```
+
+Rules that keep it layered:
+
+- `core/` and `config/` import nothing from above them; `store/`, `cloudflare/`, `notify/` import only `config/` and `core/`; `cron/` and `actions/` may import those; `pipeline/` may import everything below it (including `cron/` for the fallback tick); only `index.ts` imports `pipeline/`.
+- `deploy/` may import `src/` types and `src/recipes` (to validate recipe names); nothing in `src/` imports `deploy/` (it uses `node:fs`).
+- All I/O goes through `Deps` (`fetch`, `now`) and the two bindings on `Env` (`STORE`, `TRAFFIC`). No module reads `Date.now()` or calls global `fetch` directly, so every test runs without workerd.
+- KV keys exist in `store/` (`bans.ts`, `locks.ts`), plus `nq:*` in `notify/index.ts` and `alert:*` in `cron/analyze.ts`. Add a key = add a named function there.
+- The IP list has several writers (wicket, fail2ban, people). wicket marks its items with the `LIST_COMMENT_MARKER` prefix and the reconcile cron only ever removes those.
+
+## How to add things
+
+- **A check in the request path**: one entry in `STEPS` (`pipeline/handler.ts`), returning a `Result` or `null`; one test in `tests/pipeline.test.ts`. Keep the order comment accurate — order is the security model (mirrored in `docs/design.md`).
+- **A ban trigger**: call `banAddress(c, ip, kind, n)`; add the `kind` to `BanKind` in `store/bans.ts` and its wording in `actions/ban.ts`.
+- **A notification channel**: extend `ChannelType` in `config/channels.ts`, add one function + `case` in `notify/adapters.ts`, add the host to `NOTIFY_HOSTS` in `tests/helpers.ts`, add a payload assertion in `tests/notify.test.ts`.
+- **A recipe**: one entry in `src/recipes/index.ts` (verify the real app's failure status first; see CONTRIBUTING) and a row in README's recipe table.
+- **A setting**: a key in `wicket.example.yaml` + `deploy/config.ts` (`WicketConfig`, `parseConfig`, `toVars`), the field in `config/env.ts`, the parsed default in `config/settings.ts`, a line in README's configuration reference, an assertion in `tests/config.test.ts`.
+- **A periodic job**: add it to `fiveMinuteJob` or `hourlyJob` in `src/cron/index.ts`; both run under a run-once lock from the cron *and* from the request-path fallback (Cloudflare's cron delivery has gone silent for this Worker before; never rely on `scheduled` alone). A new cadence needs a schedule in `wicket.yaml` (`toCrons`), a branch in `index.ts` and a timer in `createFallbackTick`.
+
+## Conventions
+
+- TypeScript with `erasableSyntaxOnly` (no parameter properties, no enums). Comments, docs and UI strings in English.
+- Fail closed: missing secrets disable login (503); malformed `HOSTS_JSON` means `gated`; unknown tokens never pass. `deploy/config.ts` rejects a bad `wicket.yaml` so the deploy stops.
+- Never forward wicket credentials to the origin (`stripCredentials`). Never log secrets.
+- A wrong `Authorization: Bearer` is not a strike (it may be the origin's own auth); wrong `X-Wicket-Token` / `wicket_token` / `x-access-token` / `X-API-Key` / `?token=` are. Gating a host whose clients send those headers requires registering their values in `API_TOKENS` first.
+- Nothing deployment-specific in the repo: no real hostnames, IPs, namespace or list ids. `wicket.yaml` is git-ignored; the owner's lives in dotfiles (`projects/wicket/wicket.yaml`, symlinked into this checkout) together with `env.sh` (secrets).
+- Deploy with `cf deploy --secrets-file` (for the owner: `wicket-apply-secrets` in dotfiles, also run by its pre-push hook when `env.sh` or `wicket.yaml` change). **A bare `cf deploy` / `npm run deploy` wipes every secret** in cf 1.0.0-beta.5, so `npm run deploy` refuses. Cloudflare-side changes use `cf …`; deleting Access apps and editing zone WAF rulesets are blocked by the permission classifier and must be run by the owner.
+
+## Forbidden
+
+- Cloudflare Access, email OTP, or any per-browser identity flow (the owner rejected them).
+- User accounts or hashed password stores; two shared passwords + tokens is the design.
+- Proxying video or large-file hosts (Cloudflare terms); they stay direct.
