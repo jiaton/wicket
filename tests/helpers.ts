@@ -2,7 +2,7 @@ import type { Env } from '../src/config/env';
 import { createHandler } from '../src/pipeline/handler';
 
 export class FakeKV {
-  store = new Map<string, { value: string; expires?: number }>();
+  store = new Map<string, { value: string; expires?: number; metadata?: unknown }>();
   now = () => Date.now();
   async get(key: string): Promise<string | null> {
     const hit = this.store.get(key);
@@ -13,19 +13,19 @@ export class FakeKV {
     }
     return hit.value;
   }
-  async put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void> {
-    this.store.set(key, { value, expires: opts?.expirationTtl ? this.now() + opts.expirationTtl * 1000 : undefined });
+  async put(key: string, value: string, opts?: { expirationTtl?: number; metadata?: unknown }): Promise<void> {
+    this.store.set(key, { value, expires: opts?.expirationTtl ? this.now() + opts.expirationTtl * 1000 : undefined, metadata: opts?.metadata });
   }
   async delete(key: string): Promise<void> {
     this.store.delete(key);
   }
   /** Prefix listing in two pages, so cursor handling is exercised. */
-  async list(opts: { prefix?: string; cursor?: string } = {}): Promise<{ keys: { name: string }[]; list_complete: boolean; cursor?: string }> {
+  async list(opts: { prefix?: string; cursor?: string } = {}): Promise<{ keys: { name: string; metadata?: unknown }[]; list_complete: boolean; cursor?: string }> {
     const names = [...this.store.keys()].filter((k) => k.startsWith(opts.prefix ?? '')).sort();
     const start = opts.cursor ? Number(opts.cursor) : 0;
     const page = names.slice(start, start + 2);
     const done = start + 2 >= names.length;
-    return { keys: page.map((name) => ({ name })), list_complete: done, ...(done ? {} : { cursor: String(start + 2) }) };
+    return { keys: page.map((name) => ({ name, metadata: this.store.get(name)?.metadata })), list_complete: done, ...(done ? {} : { cursor: String(start + 2) }) };
   }
 }
 
@@ -83,6 +83,8 @@ export function makeEnv(kv: FakeKV, analytics: FakeAnalytics, overrides: Partial
     COOKIE_DOMAIN: 'example.test',
     FAIL_LIMIT: '3',
     SITE_NAME: 'test',
+    // Every kind immediate, so the older suites see one message per event; tests/settings.test.ts covers digests.
+    NOTIFY_POLICY_JSON: JSON.stringify({ kinds: { scanner: 'immediate', credentials: 'immediate', app_logins: 'immediate', lockdown: 'immediate', traffic: 'immediate', reconcile: 'immediate', unban: 'immediate' }, digestSeconds: 3600 }),
     ...overrides,
   };
 }

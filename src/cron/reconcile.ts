@@ -19,12 +19,12 @@ export interface ReconcileResult {
   removed: string[];
 }
 
-export async function reconcile(env: Env, doFetch: Fetch): Promise<ReconcileResult | null> {
+export async function reconcile(env: Env, doFetch: Fetch, now: number): Promise<ReconcileResult | null> {
   const cfg = settings(env);
   const items = await listItems(env, doFetch);
   if (items === null) return null;
 
-  const banned = new Set(await listBans(env));
+  const banned = new Set((await listBans(env)).map((b) => b.ip));
   const listed = new Set(items.map((it) => it.ip));
   const added = [...banned].filter((ip) => !listed.has(ip));
   const stale = items.filter((it) => it.comment.startsWith(LIST_COMMENT_MARKER) && !banned.has(it.ip));
@@ -39,6 +39,7 @@ export async function reconcile(env: Env, doFetch: Fetch): Promise<ReconcileResu
 
   if (result.added.length || result.removed.length) {
     await emit(env, doFetch, {
+      kind: 'reconcile',
       severity: 'info',
       title: `${cfg.siteName}: IP list reconciled`,
       text: [
@@ -47,7 +48,7 @@ export async function reconcile(env: Env, doFetch: Fetch): Promise<ReconcileResu
       ]
         .filter(Boolean)
         .join('\n'),
-    });
+    }, now);
   }
   return result;
 }

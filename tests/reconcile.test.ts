@@ -28,7 +28,7 @@ describe('listBans', () => {
     for (const ip of ['1.1.1.1', '2.2.2.2', '3.3.3.3', '4.4.4.4', '5.5.5.5']) await ban(kv, ip);
     await kv.put('fail:9.9.9.9', '1');
     const env = makeEnv(kv, new FakeAnalytics());
-    expect((await listBans(env)).sort()).toEqual(['1.1.1.1', '2.2.2.2', '3.3.3.3', '4.4.4.4', '5.5.5.5']);
+    expect((await listBans(env)).map((b) => b.ip).sort()).toEqual(['1.1.1.1', '2.2.2.2', '3.3.3.3', '4.4.4.4', '5.5.5.5']);
   });
 });
 
@@ -36,7 +36,7 @@ describe('reconcile', () => {
   it('does nothing without list credentials', async () => {
     const env = makeEnv(new FakeKV(), new FakeAnalytics());
     const net = fakeNetwork();
-    expect(await reconcile(env, net.doFetch)).toBeNull();
+    expect(await reconcile(env, net.doFetch, 1_800_000_000_000)).toBeNull();
     expect(net.sent).toHaveLength(0);
   });
 
@@ -53,7 +53,7 @@ describe('reconcile', () => {
     );
     const env = makeEnv(kv, new FakeAnalytics(), LIST_ENV);
 
-    const result = await reconcile(env, net.doFetch);
+    const result = await reconcile(env, net.doFetch, 1_800_000_000_000);
     expect(result).toEqual({ added: ['10.0.0.2'], removed: ['10.0.0.3'] });
 
     const writes = net.sent.filter((s) => s.url.includes('rules/lists') && s.init?.method && s.init.method !== 'GET');
@@ -72,7 +72,7 @@ describe('reconcile', () => {
     await ban(kv, '10.0.0.1');
     const net = fakeNetwork(listServer([{ id: 'a', ip: '10.0.0.1', comment: 'wicket test: scanner' }]));
     const env = makeEnv(kv, new FakeAnalytics(), LIST_ENV);
-    expect(await reconcile(env, net.doFetch)).toEqual({ added: [], removed: [] });
+    expect(await reconcile(env, net.doFetch, 1_800_000_000_000)).toEqual({ added: [], removed: [] });
     expect(net.telegram()).toHaveLength(0);
   });
 
@@ -81,7 +81,7 @@ describe('reconcile', () => {
     await ban(kv, '10.0.0.1');
     const net = fakeNetwork({ 'rules/lists/list/items': () => new Response('nope', { status: 500 }) });
     const env = makeEnv(kv, new FakeAnalytics(), LIST_ENV);
-    expect(await reconcile(env, net.doFetch)).toBeNull();
+    expect(await reconcile(env, net.doFetch, 1_800_000_000_000)).toBeNull();
     expect(net.sent.filter((s) => s.init?.method === 'POST' && s.url.includes('rules/lists'))).toHaveLength(0);
   });
 });

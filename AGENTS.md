@@ -11,19 +11,19 @@ deploy/               build-time only, runs in Node, never bundled: config.ts (Y
 src/index.ts          Worker entry: fetch = pipeline, scheduled = the five-minute or the hourly job (by cron string)
 src/pipeline/         request handling as an ordered list of steps (handler.ts: STEPS)
   context.ts          Ctx (everything a step may need), Deps (injected fetch + clock), Outcome, Step
-  endpoints.ts        /__wicket/login|logout|unban
+  endpoints.ts        /__wicket/login|logout|unban|settings (settings = owner-only policy page)
   observe.ts          observe mode: passthrough + watch rules + scanner
   failures.ts         wrong password/token → counters → ban or 401
   respond.ts          html()/json() helpers
 src/actions/ban.ts    the one exit for every ban trigger: KV + IP list + notification; lockdown
-src/store/            bans.ts (bans, counters, lockdown), locks.ts (job:* run-once locks) — every KV key, behind named functions
-src/notify/           events with severities → channels; adapters.ts has one function per channel type
+src/store/            bans.ts (bans, counters, lockdown), locks.ts (job:* run-once locks), settings.ts (settings:notify) — every KV key, behind named functions
+src/notify/           events with kind + severity → policy (policy.ts: defaults ← NOTIFY_POLICY_JSON ← saved settings) → channels; digests queued in KV; adapters.ts has one function per channel type
 src/cron/             index.ts (jobs, run-once locks, request-path fallback tick), analyze.ts (Analytics Engine → alerts), reconcile.ts (KV bans ↔ IP list)
 src/cloudflare/       REST clients: lists.ts (IP list), analytics.ts (SQL)
-src/config/           parsing only: env.ts (field names), settings.ts (vars), hosts.ts (HOSTS_JSON), tokens.ts (API_TOKENS), channels.ts (NOTIFY_JSON)
+src/config/           parsing only: env.ts (field names), settings.ts (vars), hosts.ts (HOSTS_JSON), tokens.ts (API_TOKENS), channels.ts (NOTIFY_JSON), notifications.ts (policy kinds/deliveries)
 src/core/             pure functions, no I/O: crypto.ts, credentials.ts (carriers, cookie, CSRF), ip.ts, counters.ts
 src/recipes/          data: per-app watch rules
-src/ui/pages.ts       HTML pages
+src/ui/               pages.ts (login, messages, shell), settings.ts (owner settings page)
 tests/                vitest in plain Node; helpers.ts fakes KV, Analytics and the network
 ```
 
@@ -31,7 +31,7 @@ Rules that keep it layered:
 
 - `core/` and `config/` import nothing from above them; `store/`, `cloudflare/`, `notify/` import only `config/` and `core/`; `cron/` and `actions/` may import those; `pipeline/` may import everything below it (including `cron/` for the fallback tick); only `index.ts` imports `pipeline/`.
 - `deploy/` may import `src/` types and `src/recipes` (to validate recipe names); nothing in `src/` imports `deploy/` (it uses `node:fs`).
-- All I/O goes through `Deps` (`fetch`, `now`) and the two bindings on `Env` (`STORE`, `TRAFFIC`). No module reads `Date.now()` or calls global `fetch` directly, so every test runs without workerd.
+- All I/O goes through `Deps` (`fetch`, `now`) and the two bindings on `Env` (`STORE`, `TRAFFIC`). No module reads `Date.now()` or calls global `fetch` directly (only `index.ts` does), so every test runs without workerd; `emit` and the jobs take `now` as a parameter.
 - KV keys exist in `store/` (`bans.ts`, `locks.ts`), plus `nq:*` in `notify/index.ts` and `alert:*` in `cron/analyze.ts`. Add a key = add a named function there.
 - The IP list has several writers (wicket, fail2ban, people). wicket marks its items with the `LIST_COMMENT_MARKER` prefix and the reconcile cron only ever removes those.
 
@@ -39,6 +39,7 @@ Rules that keep it layered:
 
 - **A check in the request path**: one entry in `STEPS` (`pipeline/handler.ts`), returning a `Result` or `null`; one test in `tests/pipeline.test.ts`. Keep the order comment accurate — order is the security model (mirrored in `docs/design.md`).
 - **A ban trigger**: call `banAddress(c, ip, kind, n)`; add the `kind` to `BanKind` in `store/bans.ts` and its wording in `actions/ban.ts`.
+- **A notification event**: `emit(env, fetch, { kind, severity, title, text, link?, ip?, cc?, host? }, now)`. A new `kind` goes into `EventKind`/`POLICY_KINDS`/`KIND_LABELS`/`DEFAULT_POLICY` in `config/notifications.ts`, the `notifications:` table in README, and `digestEvent` if it should collapse in digests.
 - **A notification channel**: extend `ChannelType` in `config/channels.ts`, add one function + `case` in `notify/adapters.ts`, add the host to `NOTIFY_HOSTS` in `tests/helpers.ts`, add a payload assertion in `tests/notify.test.ts`.
 - **A recipe**: one entry in `src/recipes/index.ts` (verify the real app's failure status first; see CONTRIBUTING) and a row in README's recipe table.
 - **A setting**: a key in `wicket.example.yaml` + `deploy/config.ts` (`WicketConfig`, `parseConfig`, `toVars`), the field in `config/env.ts`, the parsed default in `config/settings.ts`, a line in README's configuration reference, an assertion in `tests/config.test.ts`.

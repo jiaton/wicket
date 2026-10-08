@@ -27,6 +27,7 @@ export type Outcome =
   | 'locked' // lockdown in effect
   | 'unban' // unban / lift-lockdown link used
   | 'logout'
+  | 'admin' // owner settings page
   | 'reject'; // no credentials → 401
 
 /** Everything a pipeline step may need; built once per request by the handler. */

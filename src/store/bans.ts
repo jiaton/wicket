@@ -28,19 +28,26 @@ export async function isBanned(env: Env, ip: string): Promise<boolean> {
 }
 
 export async function writeBan(env: Env, ip: string, record: BanRecord): Promise<void> {
-  await env.STORE.put(banKey(ip), JSON.stringify(record));
+  // `kind` also goes into KV metadata so a key listing can count bans without reading each record.
+  await env.STORE.put(banKey(ip), JSON.stringify(record), { metadata: { kind: record.kind } });
+}
+
+export interface BanSummary {
+  ip: string;
+  /** From KV metadata; records written before metadata existed have none. */
+  kind?: BanKind;
 }
 
 /** Every banned address in KV (the reconcile cron compares this with the Cloudflare IP list). */
-export async function listBans(env: Env): Promise<string[]> {
-  const ips: string[] = [];
+export async function listBans(env: Env): Promise<BanSummary[]> {
+  const bans: BanSummary[] = [];
   let cursor: string | undefined;
   do {
-    const page = await env.STORE.list({ prefix: 'ban:', cursor });
-    for (const key of page.keys) ips.push(key.name.slice('ban:'.length));
+    const page = await env.STORE.list<{ kind?: BanKind }>({ prefix: 'ban:', cursor });
+    for (const key of page.keys) bans.push({ ip: key.name.slice('ban:'.length), ...(key.metadata?.kind ? { kind: key.metadata.kind } : {}) });
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
-  return ips;
+  return bans;
 }
 
 export async function clearBan(env: Env, ip: string): Promise<void> {

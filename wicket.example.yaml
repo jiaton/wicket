@@ -59,6 +59,19 @@ alerts:
   ip_errors: 30              # one address, 4xx/5xx in 5 min
   guess_ips: 3               # distinct addresses failing in 5 min
 
+# How each kind of event reaches your channels: immediate (one message each), digest (one
+# message per digest_every, collecting everything in between) or off. The owner can change
+# these at runtime on https://<any gated host>/__wicket/settings without redeploying.
+notifications:
+  scanner: digest          # probe-burst bans; the internet never stops scanning
+  credentials: immediate   # wrong password / token bans
+  app_logins: immediate    # failed logins at apps in observe mode
+  lockdown: immediate
+  traffic: digest          # five-minute traffic analysis
+  reconcile: digest
+  unban: immediate
+  digest_every: 1h
+
 cloudflare:
   # cf deploy provisions a namespace on the first deploy when this is empty; wrangler needs
   # the id of a namespace you created (`wrangler kv namespace create STORE`).

@@ -10,7 +10,7 @@ export default {
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     const cfg = settings(env);
     if (controller.cron === cfg.reconcileCron) {
-      ctx.waitUntil(runOnce(env, 'reconcile', RECONCILE_SECONDS, () => hourlyJob(env, deps.fetch)));
+      ctx.waitUntil(runOnce(env, 'reconcile', RECONCILE_SECONDS, () => hourlyJob(env, deps.fetch, Date.now())));
       return;
     }
     ctx.waitUntil(runOnce(env, 'tick', TICK_SECONDS, () => fiveMinuteJob(env, deps.fetch, Date.now())));

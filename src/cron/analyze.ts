@@ -2,6 +2,7 @@ import { sql, type Row } from '../cloudflare/analytics';
 import type { Env } from '../config/env';
 import { settings, type Settings } from '../config/settings';
 import { emit, type Fetch, type Severity } from '../notify';
+import { isBanned } from '../store/bans';
 
 /**
  * Cron pass over the last five minutes of traffic. Each alert kind is deduplicated
@@ -41,6 +42,9 @@ export async function findAlerts(env: Env, cfg: Settings, doFetch: Fetch, now: n
   );
   for (const row of byIp) {
     const ip = String(row.ip);
+    if (num(row.n) < cfg.alertIpRequests && num(row.errors) < cfg.alertIpErrors) continue;
+    // An address that is already banned has been reported once; its leftover 403s are not news.
+    if (await isBanned(env, ip)) continue;
     if (num(row.n) >= cfg.alertIpRequests) {
       alerts.push({ key: `burst:${ip}`, severity: 'info', text: `${ip} (${String(row.country)}) made ${num(row.n)} requests in 5 min` });
     }
@@ -101,7 +105,7 @@ export async function runAnalysis(env: Env, doFetch: Fetch, now: number): Promis
   if (fresh.length) {
     // One message per tick; it carries the highest severity among its lines.
     const severity: Severity = fresh.some((a) => a.severity === 'warn') ? 'warn' : 'info';
-    await emit(env, doFetch, { severity, title: `${cfg.siteName}: traffic`, text: fresh.map((a) => `• ${a.text}`).join('\n') });
+    await emit(env, doFetch, { kind: 'traffic', severity, title: `${cfg.siteName}: traffic`, text: fresh.map((a) => `• ${a.text}`).join('\n') }, now);
   }
   return fresh;
 }

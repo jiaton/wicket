@@ -11,6 +11,7 @@ import { resolve } from 'node:path';
 import { parse } from 'yaml';
 
 import type { WatchRule } from '../src/config/hosts';
+import { DEFAULT_POLICY, isDelivery, isPolicyKind, type NotifyPolicy } from '../src/config/notifications.ts';
 
 export const DEFAULT_FILE = 'wicket.yaml';
 export const EXAMPLE_FILE = 'wicket.example.yaml';
@@ -58,6 +59,7 @@ export interface WicketConfig {
     cron: string;
     reconcileCron: string;
   };
+  notifications: NotifyPolicy;
 }
 
 export class ConfigError extends Error {}
@@ -159,6 +161,7 @@ export function parseConfig(doc: unknown, recipes: ReadonlySet<string> | null = 
   const rotating = isObject(limits.rotating) ? limits.rotating : {};
   const alerts = isObject(doc.alerts) ? doc.alerts : {};
   const cf = isObject(doc.cloudflare) ? doc.cloudflare : {};
+  const notifications = notifyPolicy(doc.notifications);
 
   const quiet = strOpt(alerts.quiet_hours, 'alerts.quiet_hours', '');
   if (quiet && !/^\d{1,2}-\d{1,2}$/.test(quiet)) fail('alerts.quiet_hours must look like "1-6" (local hours, inclusive)');
@@ -200,7 +203,25 @@ export function parseConfig(doc: unknown, recipes: ReadonlySet<string> | null = 
       cron: str(cf.cron, 'cloudflare.cron', '*/5 * * * *'),
       reconcileCron: str(cf.reconcile_cron, 'cloudflare.reconcile_cron', DEFAULT_RECONCILE_CRON),
     },
+    notifications,
   };
+}
+
+/** `notifications:` → per-kind delivery (immediate | digest | off) and the digest window. */
+function notifyPolicy(v: unknown): NotifyPolicy {
+  if (v === undefined || v === null) return DEFAULT_POLICY;
+  if (!isObject(v)) fail('notifications must be a mapping');
+  const r = v as Raw;
+  const kinds = { ...DEFAULT_POLICY.kinds };
+  for (const [k, d] of Object.entries(r)) {
+    if (k === 'digest_every') continue;
+    if (!isPolicyKind(k)) fail(`notifications.${k}: unknown kind (known: ${Object.keys(kinds).join(', ')}, digest_every)`);
+    if (!isDelivery(d)) fail(`notifications.${k} must be immediate, digest or off`);
+    kinds[k] = d;
+  }
+  const digestSeconds = duration(r.digest_every, 'notifications.digest_every', DEFAULT_POLICY.digestSeconds);
+  if (digestSeconds < 300 || digestSeconds > 86_400) fail('notifications.digest_every must be between 5m and 24h');
+  return { kinds, digestSeconds };
 }
 
 /**
@@ -257,6 +278,7 @@ export function toVars(cfg: WicketConfig): Record<string, string> {
     SITE_NAME: cfg.siteName,
     ANALYTICS_DATASET: cfg.cloudflare.analyticsDataset,
     RECONCILE_CRON: cfg.cloudflare.reconcileCron,
+    NOTIFY_POLICY_JSON: JSON.stringify(cfg.notifications),
   };
 }
 

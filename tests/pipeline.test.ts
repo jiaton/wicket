@@ -138,6 +138,17 @@ describe('three strikes', () => {
 });
 
 describe('allow list and bypass', () => {
+  it('lets an allow-listed address log in for a cookie, without counting wrong passwords', async () => {
+    const h = harness({ ALLOW_IPS: '203.0.113.5' });
+    for (let i = 0; i < 4; i++) expect((await h.login('nope')).status).toBe(401);
+    expect(await h.kv.get('fail:203.0.113.5')).toBeNull();
+    expect(await h.kv.get('ban:203.0.113.5')).toBeNull();
+    const res = await h.login('owner-pw');
+    expect(res.status).toBe(303);
+    expect(res.headers.get('set-cookie')).toContain('__wicket=owner.');
+  });
+
+
   it('passes allowed IPs and bypass prefixes without a cookie', async () => {
     const h = harness({ ALLOW_IPS: '10.0.0.0/8, 203.0.113.77', BYPASS_PREFIXES: 'ha.example.test/api/webhook/' });
     expect(await (await h.run(h.request('/x', { ip: '10.9.8.7' }))).text()).toBe('origin:/x');

@@ -71,7 +71,7 @@ hosts:
 
 ## Notifications
 
-Events carry a severity: scanner ban `info`, password/token/origin ban `warn`, lockdown `critical`, cron anomalies `info`. Each channel sets a minimum severity and a batching window so a scan sweep produces one message, not fifty. Channels are small HTTP adapters (Telegram, ntfy, Discord, Slack, generic webhook); an Apprise API endpoint can be targeted for everything else.
+Events carry a **kind** (scanner, credentials, app_logins, lockdown, traffic, reconcile, unban) and a **severity** (scanner ban `info`, password/token/origin ban `warn`, lockdown `critical`, cron anomalies `info`). The *policy* maps each kind to `immediate`, `digest` or `off`, with one digest window; it comes from `wicket.yaml` and can be changed at runtime on the owner-only `/__wicket/settings` page (saved in KV, so no redeploy; *Reset* returns to the file). Scanner bans are digested by default because the internet scans constantly and a human cannot act on them anyway; credential bans stay immediate because they might be a person. Channels are small HTTP adapters (Telegram, ntfy, Discord, Slack, generic webhook, Apprise) with a minimum severity each and an optional `batch` flag that turns a channel into a digest-only channel. Digests collapse bans of one kind into one line; traffic alerts skip addresses that are already banned.
 
 ## Cloudflare side
 

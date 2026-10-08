@@ -73,7 +73,7 @@ You need a Cloudflare zone, a Cloudflare Tunnel whose hostnames are proxied (ora
    }
    ```
 
-Log in at `https://<any gated host>/__wicket/login`. `/__wicket/logout` clears the cookie. Changing `OWNER_PASSWORD` logs out every browser that used it, since the password is mixed into the cookie's key.
+Log in at `https://<any gated host>/__wicket/login`. `/__wicket/logout` clears the cookie; `/__wicket/settings` (owner password only) holds the notification policy. Changing `OWNER_PASSWORD` logs out every browser that used it, since the password is mixed into the cookie's key.
 
 ## Configuration reference
 
@@ -107,6 +107,16 @@ alerts:
   ip_requests: 300                 # one address in 5 min
   ip_errors: 30                    # 4xx/5xx from one address in 5 min
   guess_ips: 3                     # distinct failing addresses in 5 min
+
+notifications:                     # immediate | digest | off per kind; see Notifications
+  scanner: digest
+  credentials: immediate
+  app_logins: immediate
+  lockdown: immediate
+  traffic: digest
+  reconcile: digest
+  unban: immediate
+  digest_every: 1h
 
 cloudflare:
   kv_namespace_id: ""              # cf provisions one when empty; wrangler needs it
@@ -172,20 +182,36 @@ Add your own with `watch`. Observe hosts also ban bursts of origin 400/404/405 (
 
 ## Notifications
 
-`NOTIFY_JSON` is an array of channels. `min` is the lowest severity delivered (`info` < `warn` < `critical`); `batch: true` turns `info` events into one digest per cron tick.
+Two things decide who hears what: the **channels** (where messages go; secrets) and the **policy** (how each kind of event is delivered; config, changeable at runtime).
+
+**Policy** — in `wicket.yaml` under `notifications:`, and on the owner-only page `https://<any gated host>/__wicket/settings`, which saves to KV and overrides the file until you press *Reset to config*. Every kind is `immediate` (a message per event), `digest` (collected and sent as one message per `digest_every`, 15 minutes to 24 hours) or `off`:
+
+| kind | what | default |
+|---|---|---|
+| `scanner` | addresses banned for probe bursts | `digest` — the internet never stops scanning |
+| `credentials` | wrong password / token bans | `immediate` |
+| `app_logins` | failed logins at apps in observe mode | `immediate` |
+| `lockdown` | password entry paused (rotating-IP guessing) | `immediate` |
+| `traffic` | five-minute analysis: bursts, error floods, new countries, admin hosts at night | `digest` |
+| `reconcile` | the hourly KV ↔ IP-list check changed something | `digest` |
+| `unban` | an unban / lift-lockdown link was used | `immediate` |
+
+A digest collapses bans of one kind into a single line (`Scanners banned (14): 1.2.3.4 (SG) nas, …`). Traffic alerts skip addresses that are already banned, so a scanner is reported once, as a ban, not again as an error flood. The settings page also shows the channels in use, the bans in store by kind, and has a *Send test message* button.
+
+**Channels** — `NOTIFY_JSON` is an array; `min` is the lowest severity a channel receives (`info` < `warn` < `critical`), and `batch: true` makes a channel take digests for everything below `critical` regardless of the policy (a quiet channel next to a loud one). Without `NOTIFY_JSON`, `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` form one Telegram channel.
 
 ```json
 [
-  { "type": "telegram", "token": "123:abc", "chat_id": "42", "min": "info", "batch": true },
+  { "type": "telegram", "token": "123:abc", "chat_id": "42", "min": "info" },
   { "type": "ntfy", "url": "https://ntfy.sh/your-topic", "min": "warn" },
-  { "type": "discord", "url": "https://discord.com/api/webhooks/…", "min": "warn" },
+  { "type": "discord", "url": "https://discord.com/api/webhooks/…", "min": "warn", "batch": true },
   { "type": "slack", "url": "https://hooks.slack.com/services/…", "min": "critical" },
   { "type": "webhook", "url": "https://example.com/hook", "min": "info" },
   { "type": "apprise", "url": "https://apprise.example.com/notify/key", "min": "warn" }
 ]
 ```
 
-Severities: scanner bans, unbans, reconcile changes and traffic digests are `info`; bans from wrong passwords, tokens or failed app logins and distributed guessing are `warn`; a lockdown is `critical`. Ban messages carry a signed **Unban** link valid for seven days; the lockdown message carries **Lift lockdown**.
+Severities: scanner bans, unbans, reconcile changes and traffic digests are `info`; bans from wrong passwords, tokens or failed app logins and distributed guessing are `warn`; a lockdown is `critical`. Immediate ban messages carry a signed **Unban** link valid for seven days; the lockdown message carries **Lift lockdown**.
 
 ## fail2ban companion
 

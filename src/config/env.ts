@@ -36,6 +36,8 @@ export interface Env {
   ANALYTICS_DATASET?: string;
   /** The cron expression of the hourly KV ↔ IP-list reconcile; every other tick is the alert pass. */
   RECONCILE_CRON?: string;
+  /** Notification policy from wicket.yaml (see config/notifications.ts); the settings page can override it. */
+  NOTIFY_POLICY_JSON?: string;
 
   // ---- secrets ----
   COOKIE_SECRET: string;

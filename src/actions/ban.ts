@@ -32,11 +32,15 @@ async function announceBan(c: Ctx, ip: string, kind: BanKind, fails: number): Pr
         : `${fails} wrong ${kind === 'token' ? 'API tokens' : 'passwords'}`;
   const edge = await listAdd(c.env, c.deps.fetch, ip, `${LIST_COMMENT_MARKER}${c.cfg.siteName}: ${reason} on ${c.url.hostname}`).catch(() => false);
   await emit(c.env, c.deps.fetch, {
+    kind: kind === 'scan' ? 'scanner' : kind === 'origin' ? 'app_logins' : 'credentials',
     severity: kind === 'scan' ? 'info' : 'warn',
     title: `${c.cfg.siteName}: banned ${ip} (${c.cc})`,
     text: `${reason} on ${c.url.hostname}.${edge ? ' Also added to the Cloudflare IP list.' : ''}`,
     link: { text: 'Unban', url: await unbanLink(c, ip) },
-  });
+    ip,
+    cc: c.cc,
+    host: c.url.hostname,
+  }, c.deps.now());
 }
 
 /** Pause password/token entry site-wide and tell the owner. */
@@ -44,10 +48,11 @@ export async function lockDown(c: Ctx, fails: number, minutes: number): Promise<
   await startLockdown(c.env, { at: c.deps.now(), host: c.url.hostname, fails }, c.cfg.lockdownSeconds);
   c.exec.waitUntil(
     emit(c.env, c.deps.fetch, {
+      kind: 'lockdown',
       severity: 'critical',
       title: `${c.cfg.siteName}: lockdown`,
       text: `${fails} wrong passwords/tokens from changing addresses within ${minutes} min (last on ${c.url.hostname}). Password entry is paused for ${Math.round(c.cfg.lockdownSeconds / 60)} min; sessions and API tokens still work.`,
       link: { text: 'Lift lockdown', url: await unbanLink(c, LOCKDOWN_IP) },
-    }),
+    }, c.deps.now()),
   );
 }

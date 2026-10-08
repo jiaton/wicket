@@ -11,12 +11,12 @@ export const RECONCILE_SECONDS = 3600;
 /** The five-minute job: traffic alerts, then the batched notification digests. */
 export async function fiveMinuteJob(env: Env, doFetch: Fetch, now: number): Promise<void> {
   await runAnalysis(env, doFetch, now);
-  await flushQueues(env, doFetch, settings(env).siteName);
+  await flushQueues(env, doFetch, settings(env).siteName, now);
 }
 
 /** The hourly job. */
-export async function hourlyJob(env: Env, doFetch: Fetch): Promise<void> {
-  await reconcile(env, doFetch);
+export async function hourlyJob(env: Env, doFetch: Fetch, now: number): Promise<void> {
+  await reconcile(env, doFetch, now);
 }
 
 /**
@@ -52,7 +52,7 @@ export function createFallbackTick(deps: { fetch: Fetch; now: () => number }) {
     }
     if (now >= nextReconcile) {
       nextReconcile = now + RECONCILE_SECONDS * 1000;
-      exec.waitUntil(runOnce(env, 'reconcile', RECONCILE_SECONDS, () => hourlyJob(env, deps.fetch)));
+      exec.waitUntil(runOnce(env, 'reconcile', RECONCILE_SECONDS, () => hourlyJob(env, deps.fetch, now)));
     }
   };
 }
