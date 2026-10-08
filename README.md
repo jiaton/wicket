@@ -10,7 +10,7 @@ wicket is a single Cloudflare Worker that stands in front of the hostnames you e
 - **Scanner auto-ban.** A hundred anonymous probes in a minute from one address is a vulnerability scanner; it gets the same ban.
 - **Rotating-IP brute force.** When failures from changing addresses pile up, wicket pauses password entry for an hour (existing sessions, tokens and allow-listed addresses keep working) and tells you.
 - **Observe mode** for apps with their own login (Home Assistant's companion app, Immich's mobile app, a public site). No password page; wicket still enforces bans, catches scanners and **counts the app's own failed logins** using built-in recipes, then bans the address like a brute-forcer. This is fail2ban's `filter.d` moved to the edge.
-- **Notifications with severities.** Telegram, ntfy, Discord, Slack, a generic webhook or an Apprise endpoint; each channel picks a minimum severity and may batch routine events into one digest per five minutes.
+- **Notifications you can tune.** Telegram, ntfy, Discord, Slack, a generic webhook or an Apprise endpoint. Every kind of event (scanner ban, wrong-password ban, lockdown, traffic alert, …) is delivered immediately, folded into an hourly digest, or dropped; scanner bans default to the digest because the internet scans all day. Change it in the config or on the owner-only settings page, no redeploy.
 - **Traffic alerts.** Every request is written to Workers Analytics Engine; every five minutes wicket alerts on bursts, error floods, distributed guessing, first visits from a new country and admin hosts used at night. The periodic jobs run from Cloudflare's cron *and*, as a fallback, from ordinary traffic, because cron delivery has been seen to stop silently.
 - **Plays well with fail2ban.** If you still run it for direct (non-proxied) hosts, `contrib/fail2ban` ships an action that adds its bans to the same IP list. An hourly cron keeps wicket's bans and the list in step.
 
@@ -36,7 +36,7 @@ You need a Cloudflare zone, a Cloudflare Tunnel whose hostnames are proxied (ora
    git clone https://github.com/jiaton/wicket && cd wicket && npm install
    cp wicket.example.yaml wicket.yaml   # edit: zone, hosts, allow_ips
    ```
-   `wicket.yaml` is the only file you edit. It is compiled into the Worker's routes and variables at deploy time and validated (unknown recipe, host outside the zone, typo in a mode → the deploy stops). Durations accept `30s`, `10m`, `24h`, `7d`.
+   `wicket.yaml` is the only file you edit. It is compiled into the Worker's routes and variables at deploy time and validated (unknown recipe, host outside the zone, typo in a mode → the deploy stops). Durations accept `30s`, `10m`, `24h`, `7d`. `wicket.yaml` and `secrets.json` are git-ignored, so a fork never carries your hosts, IPs or passwords; keep them wherever you keep private things (a dotfiles repo, a password manager) and copy them in to deploy.
 
 2. **Secrets.** Put these in a JSON file (`secrets.json`, git-ignored) or type them under the Worker's *Settings → Variables and Secrets*:
 
@@ -73,7 +73,14 @@ You need a Cloudflare zone, a Cloudflare Tunnel whose hostnames are proxied (ora
    }
    ```
 
-Log in at `https://<any gated host>/__wicket/login`. `/__wicket/logout` clears the cookie; `/__wicket/settings` (owner password only) holds the notification policy. Changing `OWNER_PASSWORD` logs out every browser that used it, since the password is mixed into the cookie's key.
+## Day to day
+
+- **Logging in.** Open any gated host, type the password once; the cookie covers every host under your domain for a year. `/__wicket/login` shows the form explicitly, `/__wicket/logout` clears the cookie. Changing `OWNER_PASSWORD` logs out every browser that used it, since the password is mixed into the cookie's key.
+- **At home.** Put your public IP in `allow_ips` and nobody in the house sees a password page; the login page still works there (the owner needs a cookie for the settings page), and wrong passwords from an allow-listed address are never counted.
+- **A ban message** names the address, country, host and reason, with an **Unban** button (a signed link, valid seven days). Scanner bans arrive as one line in the digest instead. Nothing happened in the last hour → no digest.
+- **Settings page.** `/__wicket/settings`, owner password only: per-kind delivery, digest interval, channels in use, bans in store by kind, a *Send test message* button. Saves to KV, takes effect on the next event, *Reset to config* goes back to the file.
+- **Unbanning by hand.** Use the link, or delete the KV key `ban:<ip>` (`cf kv keys delete --force --namespace-id <id> 'ban:<ip>'`); the hourly reconcile then drops the address from the IP list. If you ban yourself while testing (three wrong passwords from an address that is not allow-listed), that is the way out.
+- **Changing things later.** New host or mode → edit `wicket.yaml`, redeploy, and make sure the hostname is proxied. New password or token → secrets, redeploy. Notification policy → the settings page, no redeploy. `git pull` + redeploy picks up new recipes.
 
 ## Configuration reference
 
@@ -91,7 +98,7 @@ hosts:
     mode: observe
     watch: [{ path: /api/unlock, methods: [POST], status: [401] }]
 
-allow_ips: [203.0.113.7]          # never see a password page; put your home IP here
+allow_ips: [203.0.113.7]          # pass without a password (login page still available); put your home IP here
 bypass: [nas.example.com/hooks/]  # host/prefix that passes without credentials
 
 limits:
@@ -196,7 +203,7 @@ Two things decide who hears what: the **channels** (where messages go; secrets) 
 | `reconcile` | the hourly KV ↔ IP-list check changed something | `digest` |
 | `unban` | an unban / lift-lockdown link was used | `immediate` |
 
-A digest collapses bans of one kind into a single line (`Scanners banned (14): 1.2.3.4 (SG) nas, …`). Traffic alerts skip addresses that are already banned, so a scanner is reported once, as a ban, not again as an error flood. The settings page also shows the channels in use, the bans in store by kind, and has a *Send test message* button.
+A digest collapses bans of one kind into a single line (`Scanners banned (14): 1.2.3.4 (SG) nas, …`). The window starts with the first collected event, so a quiet hour produces no message at all, and a noisy one produces exactly one. Traffic alerts skip addresses that are already banned, so a scanner is reported once, as a ban, not again as an error flood. The settings page also shows the channels in use, the bans in store by kind, and has a *Send test message* button.
 
 **Channels** — `NOTIFY_JSON` is an array; `min` is the lowest severity a channel receives (`info` < `warn` < `critical`), and `batch: true` makes a channel take digests for everything below `critical` regardless of the policy (a quiet channel next to a loud one). Without `NOTIFY_JSON`, `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` form one Telegram channel.
 
