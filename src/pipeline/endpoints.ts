@@ -51,7 +51,9 @@ async function login(c: Ctx): Promise<Result> {
   const form = await c.req.formData().catch(() => null);
   const password = String(form?.get('password') ?? '');
   const next = safeNext(String(form?.get('next') ?? ''));
-  const honeypot = String(form?.get('email') ?? '');
+  // Honeypot for dumb bots. Named so that browser and password-manager autofill (which key
+  // off "email"/"username" labels) leave it alone; a real person never sees it.
+  const honeypot = String(form?.get('website') ?? '');
 
   // Fail closed: with the secret missing (e.g. a deploy that dropped secrets), comparing
   // against `undefined` would otherwise accept the literal password "undefined".
