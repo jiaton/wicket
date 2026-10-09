@@ -92,6 +92,28 @@ export function digestEvent(siteName: string, q: Queue, windowSeconds: number): 
   return { kind: 'traffic', severity, title: `${siteName}: ${n} event${n === 1 ? '' : 's'} in the last ${duration(windowSeconds)}`, text: lines.join('\n') };
 }
 
+export interface QueueStatus {
+  type: string;
+  min: Severity;
+  waiting: number;
+  /** Seconds until the digest is due (0 = with the next five-minute job); null when nothing waits. */
+  dueInSeconds: number | null;
+}
+
+/** What each channel has waiting for its digest (for the settings page). */
+export async function queueStatus(env: Env, now: number): Promise<QueueStatus[]> {
+  const channels = parseChannels(env);
+  if (!channels.length) return [];
+  const policy = await resolvePolicy(env);
+  const out: QueueStatus[] = [];
+  for (const [i, ch] of channels.entries()) {
+    const q = await readQueue(env, i);
+    const waiting = q ? q.events.length + q.dropped : 0;
+    out.push({ type: ch.type, min: ch.min, waiting, dueInSeconds: q && waiting ? Math.max(0, Math.round((q.since + policy.digestSeconds * 1000 - now) / 1000)) : null });
+  }
+  return out;
+}
+
 /**
  * Five-minute hook: send each channel's queue as one digest once its window has passed
  * (the window starts with the first queued event). Returns the number of digests sent.

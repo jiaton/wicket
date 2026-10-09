@@ -4,12 +4,12 @@ import { DEFAULT_POLICY, isDelivery, mergePolicy, POLICY_KINDS, type NotifyPolic
 import { cookieValue, ENDPOINT_PREFIX, safeNext, sameOrigin, setCookie } from '../core/credentials';
 import { safeEqual, signSession, signUnban, verifySession, type Role } from '../core/crypto';
 import { ipAllowed } from '../core/ip';
-import { emit } from '../notify';
+import { emit, queueStatus } from '../notify';
 import { resolvePolicy } from '../notify/policy';
-import { clearBan, clearFailures, isBanned, isLockedDown, liftLockdown, listBans, LOCKDOWN_IP } from '../store/bans';
+import { clearBan, clearFailures, isBanned, isLockedDown, liftLockdown, listBans, LOCKDOWN_IP, readBan, readLockdown, type BanKind } from '../store/bans';
 import { clearNotifySettings, writeNotifySettings } from '../store/settings';
 import { loginPage, messagePage } from '../ui/pages';
-import { settingsPage } from '../ui/settings';
+import { settingsPage, type BanRow } from '../ui/settings';
 import type { Ctx, Result } from './context';
 import { registerFailure } from './failures';
 import { html } from './respond';
@@ -96,15 +96,19 @@ async function sessionRole(c: Ctx): Promise<Role | null> {
 }
 
 /**
- * /__wicket/settings — owner only. GET shows the notification policy; POST saves it to KV
- * (overriding wicket.yaml until reset), resets it, or sends a test message.
+ * /__wicket/settings — owner only. GET shows status, the notification policy and recent
+ * bans; POST saves/resets the policy, sends a test message, unbans an address or lifts
+ * the lockdown.
  */
+const RECENT_BANS = 30;
+
 async function settings(c: Ctx): Promise<Result> {
   const role = await sessionRole(c);
   if (role !== 'owner') {
     if (role === 'friend') return [html(messagePage('Owner only', 'Settings are for the owner password.'), 403), 'reject'];
     return [html(loginPage({ host: c.url.hostname, action: LOGIN_ACTION, next: SETTINGS_PATH }), 401), 'reject'];
   }
+  const now = c.deps.now();
 
   if (c.req.method === 'POST') {
     if (!sameOrigin(c.req)) return [html(messagePage('Rejected', 'Cross-site request.'), 403), 'reject'];
@@ -115,13 +119,16 @@ async function settings(c: Ctx): Promise<Result> {
       await clearNotifySettings(c.env);
       notice = 'reset';
     } else if (action === 'test') {
-      await emit(
-        c.env,
-        c.deps.fetch,
-        { kind: 'test', severity: 'info', title: `${c.cfg.siteName}: test message`, text: `Sent from the settings page on ${c.url.hostname} by ${c.ip}.` },
-        c.deps.now(),
-      );
+      await emit(c.env, c.deps.fetch, { kind: 'test', severity: 'info', title: `${c.cfg.siteName}: test message`, text: `Sent from the settings page on ${c.url.hostname} by ${c.ip}.` }, now);
       notice = 'test';
+    } else if (action === 'unban') {
+      const ip = String(form?.get('ip') ?? '').trim();
+      if (!ip || !(await isBanned(c.env, ip))) return [html(messagePage('Not banned', `${ip || '(empty)'} is not in the ban store.`), 404), 'admin'];
+      await unbanAddress(c, ip, `from the settings page by ${c.ip}`);
+      notice = 'unbanned';
+    } else if (action === 'lift') {
+      await liftLockdownAndTell(c, `from the settings page by ${c.ip}`);
+      notice = 'lifted';
     } else {
       const base = mergePolicy(DEFAULT_POLICY, c.env.NOTIFY_POLICY_JSON);
       const kinds = { ...base.kinds };
@@ -129,27 +136,39 @@ async function settings(c: Ctx): Promise<Result> {
         const v = form?.get(`kind.${k}`);
         if (isDelivery(v)) kinds[k] = v;
       }
-      const digest = Number(form?.get('digest'));
-      const policy: NotifyPolicy = mergePolicy(base, { kinds, digestSeconds: digest });
+      const policy: NotifyPolicy = mergePolicy(base, { kinds, digestSeconds: Number(form?.get('digest')) });
       await writeNotifySettings(c.env, policy);
     }
     return [new Response(null, { status: 303, headers: { location: `${c.url.origin}${SETTINGS_PATH}?ok=${notice}`, 'cache-control': 'no-store' } }), 'admin'];
   }
 
-  const policy = await resolvePolicy(c.env);
-  const bans: Record<string, number> = {};
-  for (const b of await listBans(c.env)) bans[b.kind ?? 'older'] = (bans[b.kind ?? 'older'] ?? 0) + 1;
+  const [policy, queues, lockdown, bans] = await Promise.all([resolvePolicy(c.env), queueStatus(c.env, now), readLockdown(c.env), listBans(c.env)]);
+  const banCounts: Partial<Record<BanKind | 'unknown', number>> = {};
+  for (const b of bans) banCounts[b.kind ?? 'unknown'] = (banCounts[b.kind ?? 'unknown'] ?? 0) + 1;
+  // Records carry the timestamp; read the newest candidates (keys list in name order, so read a bounded slice of all).
+  const records = await Promise.all(bans.slice(0, 200).map(async (b) => ({ ip: b.ip, record: await readBan(c.env, b.ip) })));
+  const recent: BanRow[] = records
+    .filter((r): r is { ip: string; record: NonNullable<typeof r.record> } => r.record !== null)
+    .map((r) => ({ ip: r.ip, kind: r.record.kind ?? 'unknown', host: r.record.host, country: r.record.country, at: r.record.at }))
+    .sort((x, y) => y.at - x.at)
+    .slice(0, RECENT_BANS);
   const ok = c.url.searchParams.get('ok');
-  const notice = ok === 'saved' ? 'Saved. Applies to the next event.' : ok === 'reset' ? 'Reset to the deploy-time config.' : ok === 'test' ? 'Test message sent to every channel.' : undefined;
+  const notice =
+    ok === 'saved' ? 'Saved. Applies to the next event.' : ok === 'reset' ? 'Reset to the deploy-time config.' : ok === 'test' ? 'Test message sent to every channel.' : ok === 'unbanned' ? 'Unbanned.' : ok === 'lifted' ? 'Lockdown lifted.' : undefined;
   return [
     html(
       settingsPage({
         host: c.url.hostname,
         action: SETTINGS_PATH,
+        logout: `${ENDPOINT_PREFIX}logout`,
         policy,
         source: policy.source,
-        channels: parseChannels(c.env).map((ch) => ch.type),
-        bans,
+        channels: queues,
+        lockdown: lockdown ? { host: lockdown.host, fails: lockdown.fails, at: lockdown.at, until: lockdown.at + c.cfg.lockdownSeconds * 1000 } : null,
+        banCounts,
+        recent,
+        recentLimit: RECENT_BANS,
+        now,
         notice,
       }),
       200,
@@ -157,6 +176,18 @@ async function settings(c: Ctx): Promise<Result> {
     ),
     'admin',
   ];
+}
+
+/** Clears a ban in KV and the IP list and tells the channels; shared by the link and the page. */
+async function unbanAddress(c: Ctx, ip: string, how: string): Promise<void> {
+  await clearBan(c.env, ip);
+  const edge = await listRemove(c.env, c.deps.fetch, ip).catch(() => false);
+  await emit(c.env, c.deps.fetch, { kind: 'unban', severity: 'info', title: `${c.cfg.siteName}: unbanned ${ip}`, text: `${how}.${edge ? ' Removed from the IP list.' : ''}` }, c.deps.now());
+}
+
+async function liftLockdownAndTell(c: Ctx, how: string): Promise<void> {
+  await liftLockdown(c.env);
+  await emit(c.env, c.deps.fetch, { kind: 'unban', severity: 'info', title: `${c.cfg.siteName}: lockdown lifted`, text: `${how}.` }, c.deps.now());
 }
 
 /** The signed link from a notification: lifts one address's ban, or the lockdown when `ip=*`. */
@@ -170,12 +201,9 @@ async function unban(c: Ctx): Promise<Result> {
     return [html(messagePage('Invalid link', 'This unban link is invalid or has expired.'), 400), 'reject'];
   }
   if (ip === LOCKDOWN_IP) {
-    await liftLockdown(env);
-    await emit(env, c.deps.fetch, { kind: 'unban', severity: 'info', title: `${cfg.siteName}: lockdown lifted`, text: `Clicked from ${c.ip}.` }, c.deps.now());
+    await liftLockdownAndTell(c, `Clicked from ${c.ip}`);
     return [html(messagePage('Lockdown lifted', 'Password entry is open again.'), 200), 'unban'];
   }
-  await clearBan(env, ip);
-  const edge = await listRemove(env, c.deps.fetch, ip).catch(() => false);
-  await emit(env, c.deps.fetch, { kind: 'unban', severity: 'info', title: `${cfg.siteName}: unbanned ${ip}`, text: `Clicked from ${c.ip}.${edge ? ' Removed from the IP list.' : ''}` }, c.deps.now());
+  await unbanAddress(c, ip, `Clicked from ${c.ip}`);
   return [html(messagePage('Unbanned', `${ip} can try the password again.`), 200), 'unban'];
 }

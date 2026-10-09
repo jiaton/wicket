@@ -64,7 +64,7 @@ describe('/__wicket/settings', () => {
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain('name="kind.scanner"');
-    expect(body).toContain('Channels in use: telegram');
+    expect(body).toContain('telegram (min info): nothing waiting');
     expect(h.analytics.outcomes().at(-1)).toBe('admin');
   });
 
@@ -93,6 +93,35 @@ describe('/__wicket/settings', () => {
     await post(h, owner, { action: 'reset' });
     expect(await h.kv.get('settings:notify')).toBeNull();
     expect((await resolvePolicy(h.env)).source).toBe('config');
+  });
+
+  it('lists recent bans with working Unban buttons, shows queues and the lockdown, lifts it', async () => {
+    const h = harness({ CF_API_TOKEN: 't', CF_ACCOUNT_ID: 'acc', CF_LIST_ID: 'list', NOTIFY_POLICY_JSON: JSON.stringify({ kinds: { scanner: 'digest' } }) });
+    const owner = cookieOf(await h.login('owner-pw'));
+    // Two bans of different kinds, one queued scanner event, an active lockdown.
+    await h.kv.put('ban:198.51.100.1', JSON.stringify({ at: h.time() - 120_000, host: 'nas.example.test', country: 'SG', kind: 'scan' }), { metadata: { kind: 'scan' } });
+    await h.kv.put('ban:198.51.100.2', JSON.stringify({ at: h.time() - 60_000, host: 'nas.example.test', country: 'US', kind: 'password' }));
+    await emit(h.env, h.net.doFetch, scannerBan, h.time());
+    await h.kv.put('lockdown', JSON.stringify({ at: h.time() - 600_000, host: 'nas.example.test', fails: 10 }), { expirationTtl: 3000 });
+
+    const page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('2 total: 1 scanner · 1 unknown');
+    expect(page.indexOf('198.51.100.2')).toBeLessThan(page.indexOf('198.51.100.1')); // newest first
+    expect(page).toContain('wrong password · nas.example.test · 1 min ago');
+    expect(page).toContain('telegram (min info): 1 waiting, digest in about 60 min');
+    expect(page).toContain('<b>Active</b>, started 10 min ago');
+    expect(page).toContain('value="lift"');
+
+    const unban = await post(h, owner, { action: 'unban', ip: '198.51.100.1' });
+    expect(unban.headers.get('location')).toContain('ok=unbanned');
+    expect(await h.kv.get('ban:198.51.100.1')).toBeNull();
+    expect(h.net.sent.some((s) => s.url.includes('rules/lists') && s.init?.method === 'DELETE' || (s.url.includes('search=198.51.100.1')))).toBe(true);
+    expect((h.net.telegram().at(-1)!.body as { text: string }).text).toContain('unbanned 198.51.100.1');
+    expect((await post(h, owner, { action: 'unban', ip: '198.51.100.1' })).status).toBe(404);
+
+    const lift = await post(h, owner, { action: 'lift' });
+    expect(lift.headers.get('location')).toContain('ok=lifted');
+    expect(await h.kv.get('lockdown')).toBeNull();
   });
 
   it('rejects cross-site posts', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { reconcile } from '../src/cron/reconcile';
-import { listBans } from '../src/store/bans';
+import { backfillBanMetadata, listBans } from '../src/store/bans';
 import { FakeAnalytics, FakeKV, fakeNetwork, makeEnv } from './helpers';
 
 const LIST_ENV = { CF_API_TOKEN: 't', CF_ACCOUNT_ID: 'acc', CF_LIST_ID: 'list', SITE_NAME: 'test' };
@@ -29,6 +29,18 @@ describe('listBans', () => {
     await kv.put('fail:9.9.9.9', '1');
     const env = makeEnv(kv, new FakeAnalytics());
     expect((await listBans(env)).map((b) => b.ip).sort()).toEqual(['1.1.1.1', '2.2.2.2', '3.3.3.3', '4.4.4.4', '5.5.5.5']);
+  });
+});
+
+describe('backfillBanMetadata', () => {
+  it('adds kind metadata to records that lack it', async () => {
+    const kv = new FakeKV();
+    await kv.put('ban:1.1.1.1', JSON.stringify({ at: 1, host: 'h', country: 'US', kind: 'scan' }));
+    await kv.put('ban:2.2.2.2', JSON.stringify({ at: 1, host: 'h', country: 'US', kind: 'token' }), { metadata: { kind: 'token' } });
+    const env = makeEnv(kv, new FakeAnalytics());
+    expect(await backfillBanMetadata(env)).toBe(1);
+    expect((await listBans(env)).map((b) => [b.ip, b.kind])).toEqual([['1.1.1.1', 'scan'], ['2.2.2.2', 'token']]);
+    expect(await backfillBanMetadata(env)).toBe(0);
   });
 });
 

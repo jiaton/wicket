@@ -1,6 +1,7 @@
 import type { Env } from '../config/env';
 import { settings } from '../config/settings';
 import { flushQueues, type Fetch } from '../notify';
+import { backfillBanMetadata } from '../store/bans';
 import { acquireJobLock } from '../store/locks';
 import { runAnalysis } from './analyze';
 import { reconcile } from './reconcile';
@@ -16,6 +17,7 @@ export async function fiveMinuteJob(env: Env, doFetch: Fetch, now: number): Prom
 
 /** The hourly job. */
 export async function hourlyJob(env: Env, doFetch: Fetch, now: number): Promise<void> {
+  await backfillBanMetadata(env);
   await reconcile(env, doFetch, now);
 }
 

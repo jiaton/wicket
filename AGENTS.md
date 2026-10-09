@@ -11,12 +11,12 @@ deploy/               build-time only, runs in Node, never bundled: config.ts (Y
 src/index.ts          Worker entry: fetch = pipeline, scheduled = the five-minute or the hourly job (by cron string)
 src/pipeline/         request handling as an ordered list of steps (handler.ts: STEPS)
   context.ts          Ctx (everything a step may need), Deps (injected fetch + clock), Outcome, Step
-  endpoints.ts        /__wicket/login|logout|unban|settings (settings = owner-only policy page)
+  endpoints.ts        /__wicket/login|logout|unban|settings (settings = owner-only page: status, policy, recent bans with unban/lift)
   observe.ts          observe mode: passthrough + watch rules + scanner
   failures.ts         wrong password/token → counters → ban or 401
   respond.ts          html()/json() helpers
 src/actions/ban.ts    the one exit for every ban trigger: KV + IP list + notification; lockdown
-src/store/            bans.ts (bans, counters, lockdown), locks.ts (job:* run-once locks), settings.ts (settings:notify) — every KV key, behind named functions
+src/store/            bans.ts (bans with `kind` in KV metadata, counters, lockdown), locks.ts (job:* run-once locks), settings.ts (settings:notify) — every KV key, behind named functions
 src/notify/           events with kind + severity → policy (policy.ts: defaults ← NOTIFY_POLICY_JSON ← saved settings) → channels; digests queued in KV; adapters.ts has one function per channel type
 src/cron/             index.ts (jobs, run-once locks, request-path fallback tick), analyze.ts (Analytics Engine → alerts), reconcile.ts (KV bans ↔ IP list)
 src/cloudflare/       REST clients: lists.ts (IP list), analytics.ts (SQL)

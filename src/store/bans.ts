@@ -50,6 +50,32 @@ export async function listBans(env: Env): Promise<BanSummary[]> {
   return bans;
 }
 
+export async function readBan(env: Env, ip: string): Promise<BanRecord | null> {
+  const raw = await env.STORE.get(banKey(ip));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as BanRecord;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Bans written before `kind` went into KV metadata (2026-10) have none; rewrite up to `max`
+ * of them per call so key listings can count by kind. Returns how many were rewritten.
+ */
+export async function backfillBanMetadata(env: Env, max = 100): Promise<number> {
+  let n = 0;
+  for (const b of await listBans(env)) {
+    if (b.kind || n >= max) continue;
+    const record = await readBan(env, b.ip);
+    if (!record) continue;
+    await writeBan(env, b.ip, record);
+    n += 1;
+  }
+  return n;
+}
+
 export async function clearBan(env: Env, ip: string): Promise<void> {
   await Promise.all([env.STORE.delete(banKey(ip)), env.STORE.delete(failKey(ip)), env.STORE.delete(originFailKey(ip))]);
 }
@@ -87,6 +113,22 @@ export async function bumpGlobalFailures(env: Env, now: number, windowSeconds: n
 export async function startLockdown(env: Env, record: { at: number; host: string; fails: number }, seconds: number): Promise<void> {
   await env.STORE.put(LOCKDOWN_KEY, JSON.stringify(record), { expirationTtl: seconds });
   await env.STORE.delete(GLOBAL_FAIL_KEY);
+}
+
+export interface LockdownRecord {
+  at: number;
+  host: string;
+  fails: number;
+}
+
+export async function readLockdown(env: Env): Promise<LockdownRecord | null> {
+  const raw = await env.STORE.get(LOCKDOWN_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as LockdownRecord;
+  } catch {
+    return null;
+  }
 }
 
 export async function liftLockdown(env: Env): Promise<void> {
