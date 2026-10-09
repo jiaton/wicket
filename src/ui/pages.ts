@@ -2,9 +2,24 @@
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
 
+/** The mark: a small gate (a wicket), stroke-only so it takes the page's colours. */
+const MARK = (size: number) =>
+  `<svg class="mark" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+  `<path d="M5 4v16M19 4v16M5 9h14M5 15h14M5 15l14-6"/></svg>`;
+
+/** Same mark as a favicon (data URI, accent blue), so no external asset is ever loaded. */
+const FAVICON =
+  'data:image/svg+xml,' +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#2d5be3" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4v16M19 4v16M5 9h14M5 15h14M5 15l14-6"/></svg>`,
+  );
+
+/** Brand row above every page's heading. */
+export const brand = (label = 'wicket') => `<div class="brand">${MARK(18)}<span>${esc(label)}</span></div>`;
+
 const shell = (title: string, body: string, variant: 'narrow' | 'wide' = 'narrow') => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>${esc(title)}</title>
+<meta name="robots" content="noindex"><title>${esc(title)}</title><link rel="icon" href="${FAVICON}">
 <style>
 :root{--bg:#f6f5f2;--fg:#1c1b19;--muted:#6b6963;--card:#fff;--line:#d9d6cf;--accent:#2d5be3;--err:#b3261e}
 @media(prefers-color-scheme:dark){:root{--bg:#15161a;--fg:#ecebe6;--muted:#9a988f;--card:#1f2127;--line:#33363e;--accent:#7c9cff;--err:#ff8a80}}
@@ -14,8 +29,11 @@ table{width:100%;border-collapse:collapse;margin:8px 0}td{padding:10px 6px;borde
 small{color:var(--muted)}select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit}
 .row{display:flex;gap:8px;flex-wrap:wrap}.row button{width:auto;flex:1}.secondary{background:transparent;color:var(--accent);border:1px solid var(--line)}
 .ok{color:var(--accent);font-size:14px}a{color:var(--accent)}
+.brand{display:flex;align-items:center;gap:7px;color:var(--accent);font-weight:600;font-size:13px;letter-spacing:.02em;margin-bottom:10px}.brand .mark{flex:none}
+.head .brand{font-size:18px;color:var(--fg);margin:0}.head .brand .mark{color:var(--accent);width:22px;height:22px}
 h2{font-size:15px;margin:22px 0 4px}.head{display:flex;justify-content:space-between;align-items:baseline;gap:12px}.head a{font-size:13px}
 .inline{display:inline}.small{margin:0;padding:6px 10px;width:auto;font-size:13px}code{font-size:13px}
+.pager span{color:var(--muted)}form.row{margin-top:12px;align-items:center}form.row input{flex:1;width:auto}form.row button{flex:none}
 h1{font-size:18px;margin:0 0 4px}p{margin:0 0 16px;color:var(--muted);font-size:14px}
 label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 input{width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit}
@@ -31,7 +49,7 @@ export function loginPage(opts: { host: string; action: string; next: string; er
       : '';
   return shell(
     opts.host,
-    `<h1>${esc(opts.host)}</h1><p>Private. Enter the password to continue.</p>
+    `${brand()}<h1>${esc(opts.host)}</h1><p>Private. Enter the password to continue.</p>
 <form method="post" action="${esc(opts.action)}" autocomplete="off">
 <input type="hidden" name="next" value="${esc(opts.next)}">
 <label for="pw">Password</label><input id="pw" name="password" type="password" required autofocus autocomplete="current-password">
@@ -42,7 +60,7 @@ ${opts.error ? `<p class="err" role="alert">${esc(opts.error)}${esc(hint)}</p>` 
 }
 
 export function messagePage(title: string, text: string): string {
-  return shell(title, `<h1>${esc(title)}</h1><p>${esc(text)}</p>`);
+  return shell(title, `${brand()}<h1>${esc(title)}</h1><p>${esc(text)}</p>`);
 }
 
 /** The shell for pages built elsewhere (settings). */

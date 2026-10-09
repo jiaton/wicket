@@ -145,13 +145,18 @@ async function settings(c: Ctx): Promise<Result> {
   const [policy, queues, lockdown, bans] = await Promise.all([resolvePolicy(c.env), queueStatus(c.env, now), readLockdown(c.env), listBans(c.env)]);
   const banCounts: Partial<Record<BanKind | 'unknown', number>> = {};
   for (const b of bans) banCounts[b.kind ?? 'unknown'] = (banCounts[b.kind ?? 'unknown'] ?? 0) + 1;
-  // Records carry the timestamp; read the newest candidates (keys list in name order, so read a bounded slice of all).
-  const records = await Promise.all(bans.slice(0, 200).map(async (b) => ({ ip: b.ip, record: await readBan(c.env, b.ip) })));
-  const recent: BanRow[] = records
-    .filter((r): r is { ip: string; record: NonNullable<typeof r.record> } => r.record !== null)
-    .map((r) => ({ ip: r.ip, kind: r.record.kind ?? 'unknown', host: r.record.host, country: r.record.country, at: r.record.at }))
-    .sort((x, y) => y.at - x.at)
-    .slice(0, RECENT_BANS);
+  // Newest first from the key metadata; records are only read for the page shown, and only
+  // for bans older than the metadata (the hourly job backfills those).
+  const pageNo = Math.max(1, Math.floor(Number(c.url.searchParams.get('page')) || 1));
+  const ordered = [...bans].sort((x, y) => (y.at ?? 0) - (x.at ?? 0));
+  const slice = ordered.slice((pageNo - 1) * RECENT_BANS, pageNo * RECENT_BANS);
+  const recent: BanRow[] = await Promise.all(
+    slice.map(async (b) => {
+      const r = b.at !== undefined ? null : await readBan(c.env, b.ip);
+      return { ip: b.ip, kind: b.kind ?? r?.kind ?? 'unknown', host: b.host ?? r?.host ?? '', country: b.country ?? r?.country ?? '', at: b.at ?? r?.at ?? 0 };
+    }),
+  );
+  const pages = Math.max(1, Math.ceil(ordered.length / RECENT_BANS));
   const ok = c.url.searchParams.get('ok');
   const notice =
     ok === 'saved' ? 'Saved. Applies to the next event.' : ok === 'reset' ? 'Reset to the deploy-time config.' : ok === 'test' ? 'Test message sent to every channel.' : ok === 'unbanned' ? 'Unbanned.' : ok === 'lifted' ? 'Lockdown lifted.' : undefined;
@@ -167,7 +172,9 @@ async function settings(c: Ctx): Promise<Result> {
         lockdown: lockdown ? { host: lockdown.host, fails: lockdown.fails, at: lockdown.at, until: lockdown.at + c.cfg.lockdownSeconds * 1000 } : null,
         banCounts,
         recent,
-        recentLimit: RECENT_BANS,
+        page: Math.min(pageNo, pages),
+        pages,
+        perPage: RECENT_BANS,
         now,
         notice,
       }),

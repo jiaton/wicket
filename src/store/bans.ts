@@ -27,15 +27,22 @@ export async function isBanned(env: Env, ip: string): Promise<boolean> {
   return (await env.STORE.get(banKey(ip))) !== null;
 }
 
-export async function writeBan(env: Env, ip: string, record: BanRecord): Promise<void> {
-  // `kind` also goes into KV metadata so a key listing can count bans without reading each record.
-  await env.STORE.put(banKey(ip), JSON.stringify(record), { metadata: { kind: record.kind } });
+/** What a key listing can see without reading the record (KV metadata, ≤1 KB). */
+export interface BanMeta {
+  kind: BanKind;
+  at: number;
+  host: string;
+  country: string;
 }
 
-export interface BanSummary {
+export async function writeBan(env: Env, ip: string, record: BanRecord): Promise<void> {
+  // The summary also goes into KV metadata so listings can sort, count and page without reading records.
+  const metadata: BanMeta = { kind: record.kind, at: record.at, host: record.host.slice(0, 120), country: record.country };
+  await env.STORE.put(banKey(ip), JSON.stringify(record), { metadata });
+}
+
+export interface BanSummary extends Partial<BanMeta> {
   ip: string;
-  /** From KV metadata; records written before metadata existed have none. */
-  kind?: BanKind;
 }
 
 /** Every banned address in KV (the reconcile cron compares this with the Cloudflare IP list). */
@@ -43,8 +50,8 @@ export async function listBans(env: Env): Promise<BanSummary[]> {
   const bans: BanSummary[] = [];
   let cursor: string | undefined;
   do {
-    const page = await env.STORE.list<{ kind?: BanKind }>({ prefix: 'ban:', cursor });
-    for (const key of page.keys) bans.push({ ip: key.name.slice('ban:'.length), ...(key.metadata?.kind ? { kind: key.metadata.kind } : {}) });
+    const page = await env.STORE.list<Partial<BanMeta>>({ prefix: 'ban:', cursor });
+    for (const key of page.keys) bans.push({ ip: key.name.slice('ban:'.length), ...(key.metadata ?? {}) });
     cursor = page.list_complete ? undefined : page.cursor;
   } while (cursor);
   return bans;
@@ -61,13 +68,13 @@ export async function readBan(env: Env, ip: string): Promise<BanRecord | null> {
 }
 
 /**
- * Bans written before `kind` went into KV metadata (2026-10) have none; rewrite up to `max`
- * of them per call so key listings can count by kind. Returns how many were rewritten.
+ * Bans written before the summary went into KV metadata (2026-10) lack it; rewrite up to
+ * `max` of them per call so listings can sort and count. Returns how many were rewritten.
  */
 export async function backfillBanMetadata(env: Env, max = 100): Promise<number> {
   let n = 0;
   for (const b of await listBans(env)) {
-    if (b.kind || n >= max) continue;
+    if (b.at !== undefined || n >= max) continue;
     const record = await readBan(env, b.ip);
     if (!record) continue;
     await writeBan(env, b.ip, record);

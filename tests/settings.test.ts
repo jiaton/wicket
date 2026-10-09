@@ -106,7 +106,10 @@ describe('/__wicket/settings', () => {
 
     const page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
     expect(page).toContain('2 total: 1 scanner · 1 unknown');
-    expect(page.indexOf('198.51.100.2')).toBeLessThan(page.indexOf('198.51.100.1')); // newest first
+    expect(page).toContain('2 total, newest first, 30 per page');
+    expect(page).not.toContain('page 1 of');
+    // Newest first by metadata; a record without metadata (not yet backfilled) sorts last but still shows its details.
+    expect(page.indexOf('198.51.100.1')).toBeLessThan(page.indexOf('198.51.100.2'));
     expect(page).toContain('wrong password · nas.example.test · 1 min ago');
     expect(page).toContain('telegram (min info): 1 waiting, digest in about 60 min');
     expect(page).toContain('<b>Active</b>, started 10 min ago');
@@ -122,6 +125,29 @@ describe('/__wicket/settings', () => {
     const lift = await post(h, owner, { action: 'lift' });
     expect(lift.headers.get('location')).toContain('ok=lifted');
     expect(await h.kv.get('lockdown')).toBeNull();
+  });
+
+  it('pages through many bans, newest first', async () => {
+    const h = harness();
+    const owner = cookieOf(await h.login('owner-pw'));
+    for (let i = 1; i <= 35; i++) {
+      const ip = `203.0.113.${i}`;
+      const at = h.time() - i * 60_000; // .1 is the newest
+      await h.kv.put(`ban:${ip}`, JSON.stringify({ at, host: 'nas.example.test', country: 'US', kind: 'scan' }), { metadata: { kind: 'scan', at, host: 'nas.example.test', country: 'US' } });
+    }
+    const p1 = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(p1).toContain('35 total: 35 scanner');
+    expect(p1).toContain('page 1 of 2');
+    expect(p1).toContain('<code>203.0.113.1</code>');
+    expect(p1).toContain('<code>203.0.113.30</code>');
+    expect(p1).not.toContain('<code>203.0.113.31</code>');
+    expect(p1).toContain('href="?page=2"');
+    const p2 = await (await h.run(h.request('/__wicket/settings?page=2', { headers: { cookie: owner } }))).text();
+    expect(p2).toContain('page 2 of 2');
+    expect(p2).toContain('<code>203.0.113.31</code>');
+    expect(p2).toContain('<code>203.0.113.35</code>');
+    expect(p2).not.toContain('<code>203.0.113.30</code>');
+    expect((p2.match(/value="unban"/g) ?? []).length).toBe(5 + 1); // five rows + the free-form box
   });
 
   it('rejects cross-site posts', async () => {

@@ -36,7 +36,7 @@ describe('backfillBanMetadata', () => {
   it('adds kind metadata to records that lack it', async () => {
     const kv = new FakeKV();
     await kv.put('ban:1.1.1.1', JSON.stringify({ at: 1, host: 'h', country: 'US', kind: 'scan' }));
-    await kv.put('ban:2.2.2.2', JSON.stringify({ at: 1, host: 'h', country: 'US', kind: 'token' }), { metadata: { kind: 'token' } });
+    await kv.put('ban:2.2.2.2', JSON.stringify({ at: 1, host: 'h', country: 'US', kind: 'token' }), { metadata: { kind: 'token', at: 1, host: 'h', country: 'US' } });
     const env = makeEnv(kv, new FakeAnalytics());
     expect(await backfillBanMetadata(env)).toBe(1);
     expect((await listBans(env)).map((b) => [b.ip, b.kind])).toEqual([['1.1.1.1', 'scan'], ['2.2.2.2', 'token']]);

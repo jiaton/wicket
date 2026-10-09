@@ -1,6 +1,6 @@
 import { DIGEST_CHOICES, KIND_LABELS, POLICY_KINDS, type Delivery, type NotifyPolicy } from '../config/notifications';
 import type { BanKind } from '../store/bans';
-import { page } from './pages';
+import { brand, page } from './pages';
 
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
@@ -35,7 +35,9 @@ export interface SettingsView {
   banCounts: Partial<Record<BanKind | 'unknown', number>>;
   /** The most recent bans, newest first. */
   recent: BanRow[];
-  recentLimit: number;
+  page: number;
+  pages: number;
+  perPage: number;
   now: number;
   notice?: string;
 }
@@ -102,7 +104,7 @@ export function settingsPage(v: SettingsView): string {
 
   return page(
     'wicket · settings',
-    `<div class="head"><h1>wicket · settings</h1><a href="${esc(v.logout)}">Sign out</a></div>
+    `<div class="head">${brand('wicket · settings')}<a href="${esc(v.logout)}">Sign out</a></div>
 <p>Signed in as owner on ${esc(v.host)}. Settings apply to every host.</p>
 
 <h2>Status</h2>
@@ -130,9 +132,17 @@ export function settingsPage(v: SettingsView): string {
 ${v.notice ? `<p class="ok" role="status">${esc(v.notice)}</p>` : ''}
 </form>
 
-<h2>Recent bans</h2>
-<p><small>Newest ${Math.min(v.recent.length, v.recentLimit)} of ${total}. Unban removes the address from KV and from the Cloudflare IP list.</small></p>
-<table>${banRows}</table>`,
+<h2>Bans</h2>
+<p><small>${total} total, newest first, ${v.perPage} per page. Unban removes the address from KV and from the Cloudflare IP list.</small></p>
+<table>${banRows}</table>
+${
+  v.pages > 1
+    ? `<p class="pager"><small>${v.page > 1 ? `<a href="?page=${v.page - 1}">← newer</a>` : '<span>← newer</span>'} · page ${v.page} of ${v.pages} · ${
+        v.page < v.pages ? `<a href="?page=${v.page + 1}">older →</a>` : '<span>older →</span>'
+      }</small></p>`
+    : ''
+}
+<form method="post" action="${esc(v.action)}" class="row"><input name="ip" placeholder="Unban an address not listed here" aria-label="IP address" required><button type="submit" name="action" value="unban" class="secondary small">Unban</button></form>`,
     'wide',
   );
 }
