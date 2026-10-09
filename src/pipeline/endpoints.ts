@@ -61,8 +61,13 @@ async function login(c: Ctx): Promise<Result> {
     return [html(messagePage('Unavailable', 'Password entry is disabled: the Worker has no secrets configured.'), 503), 'reject'];
   }
 
+  // A filled honeypot means a bot, or a browser that autofilled a hidden field. Either way:
+  // do not check the password (no oracle for the bot) and do not count a strike (no ban for
+  // the person). Just show the form again.
+  if (honeypot) return [html(loginPage({ host: url.hostname, action: LOGIN_ACTION, next, error: 'Wrong password.' }), 401), 'reject'];
+
   let role: Role | null = null;
-  if (!honeypot && password) {
+  if (password) {
     if (safeEqual(password, env.OWNER_PASSWORD)) role = 'owner';
     else if (env.FRIEND_PASSWORD && safeEqual(password, env.FRIEND_PASSWORD)) role = 'friend';
   }
