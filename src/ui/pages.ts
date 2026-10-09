@@ -19,7 +19,7 @@ label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
 input{width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit}
 input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
 button{margin-top:14px;width:100%;font:inherit;font-weight:600;padding:10px;border:0;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer}
-.err{color:var(--err);font-size:14px;margin:10px 0 0}.hp{position:absolute;left:-9999px;top:-9999px}
+.err{color:var(--err);font-size:14px;margin:10px 0 0}
 </style></head><body><main>${body}</main></body></html>`;
 
 export function loginPage(opts: { host: string; action: string; next: string; error?: string; remaining?: number }): string {
@@ -32,7 +32,6 @@ export function loginPage(opts: { host: string; action: string; next: string; er
     `<h1>${esc(opts.host)}</h1><p>Private. Enter the password to continue.</p>
 <form method="post" action="${esc(opts.action)}" autocomplete="off">
 <input type="hidden" name="next" value="${esc(opts.next)}">
-<div class="hp" aria-hidden="true"><label>Leave this field empty<input name="website" type="text" tabindex="-1" autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore></label></div>
 <label for="pw">Password</label><input id="pw" name="password" type="password" required autofocus autocomplete="current-password">
 <button type="submit">Enter</button>
 ${opts.error ? `<p class="err" role="alert">${esc(opts.error)}${esc(hint)}</p>` : ''}

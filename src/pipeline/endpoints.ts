@@ -51,9 +51,8 @@ async function login(c: Ctx): Promise<Result> {
   const form = await c.req.formData().catch(() => null);
   const password = String(form?.get('password') ?? '');
   const next = safeNext(String(form?.get('next') ?? ''));
-  // Honeypot for dumb bots. Named so that browser and password-manager autofill (which key
-  // off "email"/"username" labels) leave it alone; a real person never sees it.
-  const honeypot = String(form?.get('website') ?? '');
+  // No honeypot field: browsers autofill hidden inputs no matter what they are called
+  // (seen with "email" and "website"), and a human rejected that way looks like a brute-forcer.
 
   // Fail closed: with the secret missing (e.g. a deploy that dropped secrets), comparing
   // against `undefined` would otherwise accept the literal password "undefined".
@@ -61,17 +60,13 @@ async function login(c: Ctx): Promise<Result> {
     return [html(messagePage('Unavailable', 'Password entry is disabled: the Worker has no secrets configured.'), 503), 'reject'];
   }
 
-  // A filled honeypot means a bot, or a browser that autofilled a hidden field. Either way:
-  // do not check the password (no oracle for the bot) and do not count a strike (no ban for
-  // the person). Just show the form again.
-  if (honeypot) return [html(loginPage({ host: url.hostname, action: LOGIN_ACTION, next, error: 'Wrong password.' }), 401), 'reject'];
-
   let role: Role | null = null;
   if (password) {
     if (safeEqual(password, env.OWNER_PASSWORD)) role = 'owner';
     else if (env.FRIEND_PASSWORD && safeEqual(password, env.FRIEND_PASSWORD)) role = 'friend';
   }
   if (!role) {
+    console.warn('login rejected', url.hostname, ip, allowed ? 'allow-listed, not counted' : 'counted');
     if (allowed) return [html(loginPage({ host: url.hostname, action: LOGIN_ACTION, next, error: 'Wrong password.' }), 401), 'reject'];
     return registerFailure(c, 'password', next);
   }

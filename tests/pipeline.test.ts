@@ -80,9 +80,6 @@ describe('password login', () => {
       }),
     );
     expect(cross.status).toBe(403);
-    expect((await h.login('owner-pw', { website: 'http://bot' })).status).toBe(401);
-    // Neither a strike nor a session: the password was never checked.
-    expect(await h.kv.get('fail:203.0.113.5')).toBeNull();
     const res = await h.login('owner-pw', { next: 'https://evil.test/' });
     expect(res.headers.get('location')).toBe('https://nas.example.test/');
     expect(safeNext('//evil')).toBe('/');
