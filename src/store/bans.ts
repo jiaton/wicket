@@ -95,6 +95,8 @@ async function bump(env: Env, key: string, windowSeconds: number): Promise<numbe
 }
 
 export const bumpFailures = (env: Env, ip: string, windowSeconds: number) => bump(env, failKey(ip), windowSeconds);
+/** Wrong passwords/tokens counted so far for an address (0 when none or expired). */
+export const failureCount = async (env: Env, ip: string): Promise<number> => Number((await env.STORE.get(failKey(ip))) ?? '0');
 export const clearFailures = (env: Env, ip: string) => env.STORE.delete(failKey(ip));
 export const bumpOriginFailures = (env: Env, ip: string, windowSeconds: number) => bump(env, originFailKey(ip), windowSeconds);
 export const clearOriginFailures = (env: Env, ip: string) => env.STORE.delete(originFailKey(ip));

@@ -19,10 +19,10 @@ export interface NotifyPolicy {
 
 export const KIND_LABELS: Record<PolicyKind, { label: string; hint: string }> = {
   scanner: { label: 'Scanner bans', hint: 'Addresses banned for probe bursts. The internet is full of these; a digest is plenty.' },
-  credentials: { label: 'Wrong password / token bans', hint: 'Someone typed or sent wrong credentials three times.' },
-  app_logins: { label: 'App login bans (observe mode)', hint: 'Failed logins at an app with its own login page.' },
+  credentials: { label: 'Wicket password / token attempts', hint: 'Every wrong wicket password or token, and the ban after three. Someone is after you, not the internet at large.' },
+  app_logins: { label: 'App login failures (observe mode)', hint: 'Failed logins at an app with its own login page, and the ban after five.' },
   lockdown: { label: 'Lockdown', hint: 'Password entry paused because of guessing from changing addresses.' },
-  traffic: { label: 'Traffic alerts', hint: 'Bursts, error floods, new countries, admin hosts at night (five-minute analysis).' },
+  traffic: { label: 'Traffic & scanning', hint: 'Scanning below the ban threshold, bursts, new countries, admin hosts at night (five-minute analysis).' },
   reconcile: { label: 'IP list reconcile', hint: 'The hourly KV ↔ Cloudflare list check changed something.' },
   unban: { label: 'Unbans', hint: 'An unban or lift-lockdown link was used.' },
 };

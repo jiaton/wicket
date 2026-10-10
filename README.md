@@ -11,7 +11,7 @@ wicket is a single Cloudflare Worker that stands in front of the hostnames you e
 - **Rotating-IP brute force.** When failures from changing addresses pile up, wicket pauses password entry for an hour (existing sessions, tokens and allow-listed addresses keep working) and tells you.
 - **Observe mode** for apps with their own login (Home Assistant's companion app, Immich's mobile app, a public site). No password page; wicket still enforces bans, catches scanners and **counts the app's own failed logins** using built-in recipes, then bans the address like a brute-forcer. This is fail2ban's `filter.d` moved to the edge.
 - **Notifications you can tune.** Telegram, ntfy, Discord, Slack, a generic webhook or an Apprise endpoint. Every kind of event (scanner ban, wrong-password ban, lockdown, traffic alert, …) is delivered immediately, folded into an hourly digest, or dropped; scanner bans default to the digest because the internet scans all day. Change it in the config or on the owner-only settings page, no redeploy.
-- **Traffic alerts.** Every request is written to Workers Analytics Engine; every five minutes wicket alerts on bursts, error floods, distributed guessing, first visits from a new country and admin hosts used at night. The periodic jobs run from Cloudflare's cron *and*, as a fallback, from ordinary traffic, because cron delivery has been seen to stop silently.
+- **Traffic analysis that knows the difference.** Every request is written to Workers Analytics Engine with its outcome; every five minutes wicket looks at the last five minutes and tells apart *wicket password/token attempts* (someone is after you; reported immediately, even a single one, with how many are left before the ban), *app login failures* in observe mode, and *scanning* (anonymous probes below the ban line, bursts, new countries, admin hosts at night; digested). The periodic jobs run from Cloudflare's cron *and*, as a fallback, from ordinary traffic, because cron delivery has been seen to stop silently.
 - **Plays well with fail2ban.** If you still run it for direct (non-proxied) hosts, `contrib/fail2ban` ships an action that adds its bans to the same IP list. An hourly cron keeps wicket's bans and the list in step.
 
 What it is not: a reverse proxy (yours keeps routing), an identity system (two passwords and tokens, no accounts), or a way to stream video or move large files through Cloudflare's proxy (their terms forbid it; keep those hosts direct). See [`docs/design.md`](docs/design.md) for the model and the threat model.
@@ -112,7 +112,7 @@ alerts:
   quiet_hours: "1-6"               # local hours, inclusive; "" disables
   timezone: America/Los_Angeles
   ip_requests: 300                 # one address in 5 min
-  ip_errors: 30                    # 4xx/5xx from one address in 5 min
+  ip_errors: 30                    # anonymous probes from one address in 5 min → scanning line
   guess_ips: 3                     # distinct failing addresses in 5 min
 
 notifications:                     # immediate | digest | off per kind; see Notifications
@@ -196,14 +196,14 @@ Two things decide who hears what: the **channels** (where messages go; secrets) 
 | kind | what | default |
 |---|---|---|
 | `scanner` | addresses banned for probe bursts | `digest` — the internet never stops scanning |
-| `credentials` | wrong password / token bans | `immediate` |
-| `app_logins` | failed logins at apps in observe mode | `immediate` |
+| `credentials` | every wrong wicket password / token (with the count left before the ban), the ban itself, distributed guessing | `immediate` |
+| `app_logins` | failed logins at apps in observe mode, and the ban after five | `immediate` |
 | `lockdown` | password entry paused (rotating-IP guessing) | `immediate` |
-| `traffic` | five-minute analysis: bursts, error floods, new countries, admin hosts at night | `digest` |
+| `traffic` | scanning below the ban line, bursts, new countries, admin hosts at night | `digest` |
 | `reconcile` | the hourly KV ↔ IP-list check changed something | `digest` |
 | `unban` | an unban / lift-lockdown link was used | `immediate` |
 
-A digest collapses bans of one kind into a single line (`Scanners banned (14): 1.2.3.4 (SG) nas, …`). The window starts with the first collected event, so a quiet hour produces no message at all, and a noisy one produces exactly one. Traffic alerts skip addresses that are already banned, so a scanner is reported once, as a ban, not again as an error flood. The settings page also shows the channels in use, the bans in store by kind, and has a *Send test message* button.
+A digest collapses bans of one kind into a single line (`Scanners banned (14): 1.2.3.4 (SG) nas, …`). The window starts with the first collected event, so a quiet hour produces no message at all, and a noisy one produces exactly one. The analysis skips addresses that are already banned, so a scanner is reported once, as a ban, not again as a probe count. The tiers, from least to most serious: scanning (`traffic`, digest) → scanner bans (`scanner`, digest) → app login failures (`app_logins`) → wicket credential attempts (`credentials`) → lockdown (`lockdown`, critical). The settings page also shows the channels in use, the bans in store by kind, and has a *Send test message* button.
 
 **Channels** — `NOTIFY_JSON` is an array; `min` is the lowest severity a channel receives (`info` < `warn` < `critical`), and `batch: true` makes a channel take digests for everything below `critical` regardless of the policy (a quiet channel next to a loud one). Without `NOTIFY_JSON`, `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` form one Telegram channel.
 
