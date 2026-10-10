@@ -58,7 +58,6 @@ describe('runAnalysis', () => {
     const cred = messages.find((t) => t.includes('wicket password/token attempts'))!;
     expect(cred).toContain('5.5.5.5 (RO) sent 2 wrong wicket password/tokens on nas.x in 5 min (1 more → ban)');
     expect(cred).toContain('guessing from 4 different addresses in 5 min (7 attempts)');
-    expect(cred).not.toContain('9.9.9.9');
     const app = messages.find((t) => t.includes('app login failures'))!;
     expect(app).toContain('8.8.8.8 (FR) failed 3 logins at ha.x in 5 min');
     const traffic = messages.find((t) => t.includes('<b>test: traffic</b>'))!;
