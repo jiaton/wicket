@@ -18,7 +18,10 @@ src/pipeline/         request handling as an ordered list of steps (handler.ts: 
 src/actions/ban.ts    the one exit for every ban trigger: KV + IP list + notification; lockdown
 src/store/            bans.ts (bans with `kind` in KV metadata, counters, lockdown), locks.ts (job:* run-once locks), settings.ts (settings:notify) — every KV key, behind named functions
 src/notify/           events with kind + severity → policy (policy.ts: defaults ← NOTIFY_POLICY_JSON ← saved settings) → channels; digests queued in KV; adapters.ts has one function per channel type
-src/cron/             index.ts (jobs, run-once locks, request-path fallback tick), analyze.ts (Analytics Engine → alerts), reconcile.ts (KV bans ↔ IP list)
+src/cron/             index.ts (jobs, run-once locks, request-path fallback tick), reconcile.ts (KV bans ↔ IP list)
+  analyze.ts          one base query → addresses.ts folds it per address → every detector → dedup → one event per kind
+  detectors/          index.ts (Detector + DetectorContext + DETECTORS list); one file per detection:
+                      credentials, guessing, app-logins, scanning, new-country, quiet-hours
 src/cloudflare/       REST clients: lists.ts (IP list), analytics.ts (SQL)
 src/config/           parsing only: env.ts (field names), settings.ts (vars), hosts.ts (HOSTS_JSON), tokens.ts (API_TOKENS), channels.ts (NOTIFY_JSON), notifications.ts (policy kinds/deliveries)
 src/core/             pure functions, no I/O: crypto.ts, credentials.ts (carriers, cookie, CSRF), ip.ts, counters.ts
@@ -43,6 +46,7 @@ Rules that keep it layered:
 - **A notification channel**: extend `ChannelType` in `config/channels.ts`, add one function + `case` in `notify/adapters.ts`, add the host to `NOTIFY_HOSTS` in `tests/helpers.ts`, add a payload assertion in `tests/notify.test.ts`.
 - **A recipe**: one entry in `src/recipes/index.ts` (verify the real app's failure status first; see CONTRIBUTING) and a row in README's recipe table.
 - **A setting**: a key in `wicket.example.yaml` + `deploy/config.ts` (`WicketConfig`, `parseConfig`, `toVars`), the field in `config/env.ts`, the parsed default in `config/settings.ts`, a line in README's configuration reference, an assertion in `tests/config.test.ts`.
+- **A detection in the traffic analysis**: one file in `src/cron/detectors/` exporting a `Detector` (`id`, `run(ctx) → Alert[]`), one entry in `DETECTORS`, one test in `tests/detectors.test.ts` using a fake `DetectorContext`. A detector reads `ctx.addresses` (the window folded per address) or runs its own `ctx.query`; it never sends anything — `runAnalysis` dedups by `key` and emits one event per `kind`, so pick the `kind` that matches the severity tier (`credentials` > `app_logins` > `traffic`).
 - **A periodic job**: add it to `fiveMinuteJob` or `hourlyJob` in `src/cron/index.ts`; both run under a run-once lock from the cron *and* from the request-path fallback (Cloudflare's cron delivery has gone silent for this Worker before; never rely on `scheduled` alone). A new cadence needs a schedule in `wicket.yaml` (`toCrons`), a branch in `index.ts` and a timer in `createFallbackTick`.
 
 ## Conventions

@@ -1,0 +1,74 @@
+import type { Row } from '../cloudflare/analytics';
+
+/**
+ * Per-address view of the last window, folded from Analytics Engine rows grouped by
+ * (ip, country, outcome, host). What a request's `outcome` (blob5) tells us:
+ *   fail / ban      wrong wicket password or token       → fails
+ *   origin-fail     an app's own login failed (observe)  → appFails
+ *   reject          anonymous probe answered 401         → probes
+ *   observe + 4xx   anonymous probe at an observe host   → probes
+ *   banned          already blocked                      → nothing
+ */
+export interface HostCounts {
+  fails: number;
+  appFails: number;
+  probes: number;
+}
+
+export interface Address {
+  country: string;
+  total: number;
+  /** Wrong wicket passwords/tokens (outcomes fail + ban). */
+  fails: number;
+  /** This window contained the request that banned the address. */
+  bannedNow: boolean;
+  /** Matched app login failures on observe hosts. */
+  appFails: number;
+  /** Anonymous probes: 401 rejections on gated hosts, 4xx at observe hosts. */
+  probes: number;
+  hosts: Map<string, HostCounts>;
+}
+
+const num = (v: string | number | undefined) => Number(v ?? 0);
+
+export function foldAddresses(rows: Row[]): Map<string, Address> {
+  const out = new Map<string, Address>();
+  for (const row of rows) {
+    const ip = String(row.ip);
+    const a = out.get(ip) ?? { country: String(row.country ?? '?'), total: 0, fails: 0, bannedNow: false, appFails: 0, probes: 0, hosts: new Map<string, HostCounts>() };
+    const host = String(row.host ?? '');
+    const h = a.hosts.get(host) ?? { fails: 0, appFails: 0, probes: 0 };
+    const n = num(row.n);
+    const errors = num(row.errors);
+    const outcome = String(row.outcome);
+    a.total += n;
+    if (outcome === 'fail' || outcome === 'ban') {
+      a.fails += n;
+      h.fails += n;
+      if (outcome === 'ban') a.bannedNow = true;
+    } else if (outcome === 'origin-fail') {
+      a.appFails += n;
+      h.appFails += n;
+    } else if (outcome === 'reject') {
+      a.probes += n;
+      h.probes += n;
+    } else if (outcome === 'observe') {
+      a.probes += errors;
+      h.probes += errors;
+    }
+    a.hosts.set(host, h);
+    out.set(ip, a);
+  }
+  return out;
+}
+
+/** Up to three hosts where `pick` is largest, for alert text. */
+export const hostList = (a: Address, pick: (h: HostCounts) => number) =>
+  [...a.hosts.entries()]
+    .filter(([, h]) => pick(h) > 0)
+    .sort((x, y) => pick(y[1]) - pick(x[1]))
+    .map(([host]) => host)
+    .slice(0, 3)
+    .join(', ');
+
+export const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
