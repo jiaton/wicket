@@ -99,6 +99,27 @@ describe('emit', () => {
     expect(await flushQueues(env, net.doFetch, 'site', NOW + 62 * 60_000)).toBe(0);
   });
 
+  it('digests analysis events under their kind label without repeating the title', async () => {
+    const { net, env } = setup([{ type: 'telegram', token: 'bot', chat_id: '1', min: 'info', batch: true }]);
+    await emit(env, net.doFetch, { kind: 'traffic', severity: 'info', title: 'site: traffic', text: '• 1.1.1.1 (US) 54 anonymous probes on nas (scanning, not banned yet) in 5 min' }, NOW);
+    await emit(env, net.doFetch, { kind: 'traffic', severity: 'info', title: 'site: traffic', text: '• 2.2.2.2 (NL) 30 anonymous probes on ha (scanning, not banned yet) in 5 min' }, NOW + 1000);
+    await emit(env, net.doFetch, { kind: 'reconcile', severity: 'info', title: 'site: IP list reconciled', text: 'added 1: 3.3.3.3' }, NOW + 2000);
+    await emit(env, net.doFetch, infoEvent, NOW + 3000);
+    expect(await flushQueues(env, net.doFetch, 'site', NOW + 61 * 60_000)).toBe(1);
+    const text = (net.telegram().at(-1)!.body as { text: string }).text;
+    expect(text).toBe(
+      [
+        '<b>site: 4 events in the last 1 h</b>',
+        'Traffic &amp; scanning',
+        '• 1.1.1.1 (US) 54 anonymous probes on nas (scanning, not banned yet) in 5 min',
+        '• 2.2.2.2 (NL) 30 anonymous probes on ha (scanning, not banned yet) in 5 min',
+        'IP list reconcile',
+        '• IP list reconciled — added 1: 3.3.3.3',
+        'Scanners banned (1): 5.6.7.8 (DE)',
+      ].join('\n'),
+    );
+  });
+
   it('a failing channel does not break the others or the caller', async () => {
     const { net, env } = setup([
       { type: 'ntfy', url: 'https://ntfy.example.test/gate' },

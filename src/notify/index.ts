@@ -1,6 +1,6 @@
 import { parseChannels, RANK, type Channel, type Severity } from '../config/channels';
 import type { Env } from '../config/env';
-import type { Delivery, EventKind, PolicyKind } from '../config/notifications';
+import { KIND_LABELS, type Delivery, type EventKind, type PolicyKind } from '../config/notifications';
 import { send } from './adapters';
 import { resolvePolicy } from './policy';
 
@@ -81,10 +81,21 @@ export function digestEvent(siteName: string, q: Queue, windowSeconds: number): 
     return `${label} (${list.length}): ${shown.join(', ')}${list.length > 12 ? ', …' : ''}`;
   };
   for (const [kind, list] of groups) {
-    if (kind === 'scanner') lines.push(banLine('Scanners banned', list));
-    else if (kind === 'credentials') lines.push(banLine('Wrong-credential bans', list));
-    else if (kind === 'app_logins') lines.push(banLine('App-login bans', list));
-    else for (const e of list) lines.push(`• ${e.title}${e.text ? ` — ${e.text}` : ''}${e.link ? ` (${e.link.url})` : ''}`);
+    // Ban events carry ip/cc/host → one line per kind. Analysis events carry their own
+    // bulleted lines → the kind's label once, then the lines. Anything else: title — text.
+    const bans = list.filter((e) => e.ip);
+    const rest = list.filter((e) => !e.ip);
+    if (bans.length) {
+      lines.push(banLine(kind === 'scanner' ? 'Scanners banned' : kind === 'credentials' ? 'Wrong-credential bans' : kind === 'app_logins' ? 'App-login bans' : 'Banned', bans));
+    }
+    if (rest.length) {
+      const label = kind in KIND_LABELS ? KIND_LABELS[kind as PolicyKind].label : kind;
+      lines.push(label);
+      for (const e of rest) {
+        if (e.text.startsWith('•')) lines.push(e.text);
+        else lines.push(`• ${e.title.replace(/^[^:]+: /, '')}${e.text ? ` — ${e.text}` : ''}${e.link ? ` (${e.link.url})` : ''}`);
+      }
+    }
   }
   if (q.dropped) lines.push(`(${q.dropped} more events not kept)`);
   const n = q.events.length + q.dropped;
