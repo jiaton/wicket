@@ -43,6 +43,8 @@ export interface WicketConfig {
     password: Limit;
     rotating: Limit & { lockdown: number };
     scanner: Limit;
+    /** Slow scanner ban from the analysis; the window is the analysis window (5 min). */
+    scanning: { count: number };
     origin: Limit;
   };
   alerts: {
@@ -187,6 +189,7 @@ export function parseConfig(doc: unknown, recipes: ReadonlySet<string> | null = 
       password: limit(limits.password, 'password', { count: 3, window: 86_400 }),
       rotating: { ...limit(rotating, 'rotating', { count: 10, window: 600 }), lockdown: duration(rotating.lockdown, 'limits.rotating.lockdown', 3600) },
       scanner: limit(limits.scanner, 'scanner', { count: 100, window: 60 }),
+      scanning: { count: num(isObject(limits.scanning) ? limits.scanning.count : limits.scanning, 'limits.scanning.count', 30) },
       origin: limit(limits.origin, 'origin', { count: 5, window: 600 }),
     },
     alerts: {
@@ -264,6 +267,7 @@ export function toVars(cfg: WicketConfig): Record<string, string> {
     LOCKDOWN_SECONDS: String(cfg.limits.rotating.lockdown),
     SCAN_LIMIT: String(cfg.limits.scanner.count),
     SCAN_WINDOW_SECONDS: String(cfg.limits.scanner.window),
+    SCANNING_LIMIT: String(cfg.limits.scanning.count),
     ORIGIN_FAIL_LIMIT: String(cfg.limits.origin.count),
     ORIGIN_FAIL_WINDOW_SECONDS: String(cfg.limits.origin.window),
     HOSTS_JSON: JSON.stringify(hostsJson),

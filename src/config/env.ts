@@ -18,6 +18,8 @@ export interface Env {
   FAIL_GLOBAL_WINDOW_SECONDS?: string;
   LOCKDOWN_SECONDS?: string;
   SCAN_LIMIT?: string;
+  /** Slow scanner ban: anonymous probes per address in the five-minute analysis window (network-wide). */
+  SCANNING_LIMIT?: string;
   SCAN_WINDOW_SECONDS?: string;
   ORIGIN_FAIL_LIMIT?: string;
   ORIGIN_FAIL_WINDOW_SECONDS?: string;

@@ -30,6 +30,8 @@ describe('wicket.yaml', () => {
     expect(cfg.cookieDomain).toBe('example.test');
     expect(cfg.limits.password).toEqual({ count: 3, window: 86_400 });
     expect(cfg.limits.rotating).toEqual({ count: 10, window: 600, lockdown: 3600 });
+    expect(cfg.limits.scanning).toEqual({ count: 30 });
+    expect(toVars(cfg).SCANNING_LIMIT).toBe('30');
     expect(cfg.cloudflare.cron).toBe('*/5 * * * *');
     expect(toCrons(cfg)).toEqual(['*/5 * * * *', '17 * * * *']);
     expect(toRoutes(cfg)).toEqual([
@@ -49,6 +51,7 @@ describe('wicket.yaml', () => {
     const s = settings(env);
     expect(s.failLimit).toBe(3);
     expect(s.lockdownSeconds).toBe(3600);
+    expect(s.scanningLimit).toBe(30);
     expect(s.cookieDomain).toBe('example.test');
     expect(s.analyticsDataset).toBe('wicket_traffic');
     expect(s.reconcileCron).toBe('17 * * * *');

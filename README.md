@@ -7,7 +7,7 @@ wicket is a single Cloudflare Worker that stands in front of the hostnames you e
 - **One shared password.** Type it once per browser; a signed cookie scoped to your domain then opens every gated host for a year. An optional second password for friends can be rotated without logging you out.
 - **API tokens** for callers that cannot type: webhooks, MCP servers, native apps. Tokens can be limited to certain hosts. Apps that already send their own `Authorization: Bearer`, `X-API-Key`, `x-access-token` or `?token=` keep working: register the value and wicket lets it through untouched.
 - **Three strikes, permanent ban.** Wrong passwords and tokens are counted per address. The third one writes a ban, appends the address to a Cloudflare IP list so a WAF rule blocks it at the edge on every proxied host, and sends you a message with a one-click **Unban** link.
-- **Scanner auto-ban.** A hundred anonymous probes in a minute from one address is a vulnerability scanner; it gets the same ban.
+- **Scanner auto-ban, fast and slow.** A hundred anonymous probes in a minute from one address is a vulnerability scanner and gets the same ban on the spot (counted in memory at the edge). Slower scanners that never burst are caught by the five-minute analysis: thirty probes across the whole network in the window, and they are banned too. Both thresholds are yours to set.
 - **Rotating-IP brute force.** When failures from changing addresses pile up, wicket pauses password entry for an hour (existing sessions, tokens and allow-listed addresses keep working) and tells you.
 - **Observe mode** for apps with their own login (Home Assistant's companion app, Immich's mobile app, a public site). No password page; wicket still enforces bans, catches scanners and **counts the app's own failed logins** using built-in recipes, then bans the address like a brute-forcer. This is fail2ban's `filter.d` moved to the edge.
 - **Notifications you can tune.** Telegram, ntfy, Discord, Slack, a generic webhook or an Apprise endpoint. Every kind of event (scanner ban, wrong-password ban, lockdown, traffic alert, …) is delivered immediately, folded into an hourly digest, or dropped; scanner bans default to the digest because the internet scans all day. Change it in the config or on the owner-only settings page, no redeploy.
@@ -104,7 +104,8 @@ bypass: [nas.example.com/hooks/]  # host/prefix that passes without credentials
 limits:
   password: { count: 3, window: 24h }                  # wrong passwords/tokens per address
   rotating: { count: 10, window: 10m, lockdown: 1h }   # failures from any address → pause logins
-  scanner:  { count: 100, window: 60s }                # anonymous probes per address
+  scanner:  { count: 100, window: 60s }                # burst: anonymous probes per address, counted at the edge
+  scanning: { count: 30 }                              # slow: probes per address in the 5-min analysis, network-wide
   origin:   { count: 5, window: 10m }                  # observe: matched failed logins per address
 
 alerts:
@@ -199,7 +200,7 @@ Two things decide who hears what: the **channels** (where messages go; secrets) 
 | `credentials` | every wrong wicket password / token (with the count left before the ban), the ban itself, distributed guessing | `immediate` |
 | `app_logins` | failed logins at apps in observe mode, and the ban after five | `immediate` |
 | `lockdown` | password entry paused (rotating-IP guessing) | `immediate` |
-| `traffic` | scanning below the ban line, bursts, new countries, admin hosts at night | `digest` |
+| `traffic` | scanning below `limits.scanning`, bursts, new countries, admin hosts at night | `digest` |
 | `reconcile` | the hourly KV ↔ IP-list check changed something | `digest` |
 | `unban` | an unban / lift-lockdown link was used | `immediate` |
 

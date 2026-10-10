@@ -44,16 +44,23 @@ describe('foldAddresses', () => {
 });
 
 describe('runAnalysis', () => {
-  it('sends one message per kind: credentials (warn), app logins (warn), traffic (info); once per hour', async () => {
+  it('bans slow scanners first, then sends one message per kind: credentials (warn), app logins (warn), traffic (info); once per hour', async () => {
     const { kv, net, env } = setup();
     await kv.put('fail:5.5.5.5', '2');
     const first = await runAnalysis(env, net.doFetch, Date.now());
     const keys = first.map((a) => a.key).sort();
-    expect(keys.filter((k) => !k.startsWith('guessing:'))).toEqual(['app:8.8.8.8', 'country:DE', 'cred:5.5.5.5', 'cred:6.6.6.6', 'cred:7.7.7.7', 'quiet:nas.x:3.3.3.3', 'scan:1.1.1.1', 'scan:2.2.2.2']);
+    // 1.1.1.1 (900 probes) and 2.2.2.2 (36 probes) crossed limits.scanning (30): banned, not alerted.
+    expect(keys.filter((k) => !k.startsWith('guessing:'))).toEqual(['app:8.8.8.8', 'country:DE', 'cred:5.5.5.5', 'cred:6.6.6.6', 'cred:7.7.7.7', 'quiet:nas.x:3.3.3.3']);
+    expect(await kv.get('ban:1.1.1.1')).not.toBeNull();
+    expect(await kv.get('ban:2.2.2.2')).not.toBeNull();
+    const bans = net.telegram().map((m) => (m.body as { text: string }).text).filter((t) => t.includes('banned'));
+    expect(bans).toHaveLength(2);
+    expect(bans.some((t) => t.includes('900 anonymous probes in 5 min across the network (scanner) on nas.x'))).toBe(true);
+    expect(bans.some((t) => t.includes('36 anonymous probes in 5 min across the network (scanner) on money.x'))).toBe(true);
     expect(keys.some((k) => k.startsWith('guessing:'))).toBe(true);
     expect(keys.some((k) => k.includes('9.9.9.9'))).toBe(false);
 
-    const messages = net.telegram().map((m) => (m.body as { text: string }).text);
+    const messages = net.telegram().map((m) => (m.body as { text: string }).text).filter((t) => !t.includes('banned'));
     expect(messages).toHaveLength(3);
     const cred = messages.find((t) => t.includes('wicket password/token attempts'))!;
     expect(cred).toContain('5.5.5.5 (RO) sent 2 wrong wicket password/tokens on nas.x in 5 min (1 more → ban)');
@@ -61,24 +68,24 @@ describe('runAnalysis', () => {
     const app = messages.find((t) => t.includes('app login failures'))!;
     expect(app).toContain('8.8.8.8 (FR) failed 3 logins at ha.x in 5 min');
     const traffic = messages.find((t) => t.includes('<b>test: traffic</b>'))!;
-    expect(traffic).toContain('2.2.2.2 (DE) 36 anonymous probes on money.x, ha.x (scanning, not banned yet) in 5 min');
-    expect(traffic).toContain('1.1.1.1 (US) 900 anonymous probes');
+    expect(traffic).not.toContain('anonymous probes');
     expect(traffic).toContain('first successful visits from DE');
     expect(traffic).toContain('used at night');
     expect(traffic).not.toContain('5.5.5.5');
 
     expect(await runAnalysis(env, net.doFetch, Date.now())).toEqual([]);
-    expect(net.telegram()).toHaveLength(3);
+    expect(net.telegram()).toHaveLength(5);
     kv.store.clear();
-    expect(await runAnalysis(env, net.doFetch, Date.now())).toHaveLength(9);
+    expect(await runAnalysis(env, net.doFetch, Date.now())).toHaveLength(7);
   });
 
-  it('skips addresses that are already banned', async () => {
-    const { kv, net, env } = setup();
+  it('reports scanning below limits.scanning instead of banning, and skips addresses already banned', async () => {
+    const { kv, net, env } = setup({ SCANNING_LIMIT: '1000' });
     await kv.put('ban:2.2.2.2', '{}');
     const alerts = await runAnalysis(env, net.doFetch, Date.now());
     expect(alerts.some((a) => a.key === 'scan:2.2.2.2')).toBe(false);
-    expect(alerts.some((a) => a.key === 'scan:1.1.1.1')).toBe(true);
+    expect(alerts.find((a) => a.key === 'scan:1.1.1.1')?.text).toContain('900 anonymous probes on nas.x (scanning, not banned yet)');
+    expect(await kv.get('ban:1.1.1.1')).toBeNull();
   });
 
   it('does nothing without a Cloudflare token', async () => {

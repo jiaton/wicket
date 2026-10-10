@@ -14,6 +14,8 @@ export interface Settings {
   /** Anonymous rejections (gated) or 4xx probes (observe) from one address = scanner. */
   scanLimit: number;
   scanWindowSeconds: number;
+  /** Slow scanner ban from the five-minute analysis (network-wide count). */
+  scanningLimit: number;
   /** Observe mode: matched origin login failures from one address before a ban. */
   originFailLimit: number;
   originFailWindowSeconds: number;
@@ -45,6 +47,7 @@ export function settings(env: Env): Settings {
     lockdownSeconds: int(env.LOCKDOWN_SECONDS, 3600),
     scanLimit: int(env.SCAN_LIMIT, 100),
     scanWindowSeconds: int(env.SCAN_WINDOW_SECONDS, 60),
+    scanningLimit: int(env.SCANNING_LIMIT, 30),
     originFailLimit: int(env.ORIGIN_FAIL_LIMIT, 5),
     originFailWindowSeconds: int(env.ORIGIN_FAIL_WINDOW_SECONDS, 600),
     cookieSeconds: int(env.COOKIE_DAYS, 365) * 86_400,

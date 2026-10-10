@@ -48,6 +48,7 @@ All triggers end in the same place (`src/actions/ban.ts`): a permanent `ban:<ip>
 | rotating-IP guessing | gated | global, KV → lockdown (no bans) | 10 in 10 min → 1 h pause |
 | scanner | gated | anonymous rejections per IP, isolate memory | 100 in 60 s |
 | scanner | observe | origin 404/400/405 per IP, isolate memory | 100 in 60 s |
+| scanner (slow) | both | anonymous probes per IP, Analytics Engine, network-wide, every 5 min | 30 in 5 min |
 | origin login failure | observe | matched watch rule per IP, KV | 5 in 10 min |
 
 ### Watch rules and recipes
@@ -81,8 +82,9 @@ Every five minutes (`src/cron/analyze.ts`):
 
 1. **One base query** over the last five minutes, grouped by address, country, outcome and host.
 2. **Fold** (`addresses.ts`): per address, how many wicket credential failures, app login failures (observe mode), anonymous probes, and on which hosts; whether a ban happened in this window.
-3. **Detectors** (`detectors/`): each is a small file with an `id` and `run(ctx) → Alert[]`. The context gives it the folded addresses, a `query()` for its own SQL, and `alreadyBanned()` / `failureCount()` lookups. Shipped: `credentials` (any wrong wicket password/token, with the count left before the ban), `guessing` (several addresses failing at once), `app-logins`, `scanning` (probes below the ban line, bursts), `new-country`, `quiet-hours`. A detector never sends anything.
-4. **Dedup and send**: each alert's `key` is remembered in KV for an hour, so a sustained event pings once; surviving alerts are grouped by `kind` and emitted as one event per kind, which the notification policy then delivers immediately, in the digest, or not at all.
+3. **Slow scanner bans** (`slow-scanner.ts`): any address with `limits.scanning` or more probes in the window is banned through the same exit as every other ban. The request-path counter is per data centre and in memory, so it only sees bursts; this count is network-wide and sees the patient scanner too.
+4. **Detectors** (`detectors/`): each is a small file with an `id` and `run(ctx) → Alert[]`. The context gives it the folded addresses, a `query()` for its own SQL, and `alreadyBanned()` / `failureCount()` lookups. Shipped: `credentials` (any wrong wicket password/token, with the count left before the ban), `guessing` (several addresses failing at once), `app-logins`, `scanning` (probes below the ban line, bursts), `new-country`, `quiet-hours`. A detector never sends anything.
+5. **Dedup and send**: each alert's `key` is remembered in KV for an hour, so a sustained event pings once; surviving alerts are grouped by `kind` and emitted as one event per kind, which the notification policy then delivers immediately, in the digest, or not at all.
 
 The tiers, least to most serious: scanning (`traffic`, digest by default) → scanner bans (`scanner`, digest) → app login failures (`app_logins`) → wicket credential attempts (`credentials`, even a single one) → lockdown (`critical`). Addresses already banned are skipped everywhere: a scanner is reported once, as its ban.
 

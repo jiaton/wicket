@@ -6,6 +6,7 @@ import { emit, type Fetch, type Severity } from '../notify';
 import { failureCount, isBanned } from '../store/bans';
 import { foldAddresses } from './addresses';
 import { DETECTORS, WINDOW, type Alert, type DetectorContext } from './detectors';
+import { banSlowScanners } from './slow-scanner';
 
 export type { Alert } from './detectors';
 export { foldAddresses } from './addresses';
@@ -28,6 +29,8 @@ export async function findAlerts(env: Env, doFetch: Fetch, now: number): Promise
     `SELECT blob3 AS ip, blob4 AS country, blob5 AS outcome, blob1 AS host, SUM(_sample_interval) AS n, SUM(IF(double1 >= 400, _sample_interval, 0)) AS errors FROM ${cfg.analyticsDataset} WHERE ${WINDOW} GROUP BY ip, country, outcome, host ORDER BY n DESC LIMIT 400`,
   );
   const addresses = foldAddresses(rows);
+  // Act first (slow scanner bans), then observe: detectors skip what was just banned.
+  await banSlowScanners(env, doFetch, now, cfg, addresses);
   const bannedCache = new Map<string, Promise<boolean>>();
   const ctx: DetectorContext = {
     cfg,

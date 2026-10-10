@@ -19,7 +19,7 @@ src/actions/ban.ts    the one exit for every ban trigger: KV + IP list + notific
 src/store/            bans.ts (bans with `kind` in KV metadata, counters, lockdown), locks.ts (job:* run-once locks), settings.ts (settings:notify) — every KV key, behind named functions
 src/notify/           events with kind + severity → policy (policy.ts: defaults ← NOTIFY_POLICY_JSON ← saved settings) → channels; digests queued in KV; adapters.ts has one function per channel type
 src/cron/             index.ts (jobs, run-once locks, request-path fallback tick), reconcile.ts (KV bans ↔ IP list)
-  analyze.ts          one base query → addresses.ts folds it per address → every detector → dedup → one event per kind
+  analyze.ts          one base query → addresses.ts folds it per address → slow-scanner.ts bans (acts) → every detector (observes) → dedup → one event per kind
   detectors/          index.ts (Detector + DetectorContext + DETECTORS list); one file per detection:
                       credentials, guessing, app-logins, scanning, new-country, quiet-hours
 src/cloudflare/       REST clients: lists.ts (IP list), analytics.ts (SQL)
@@ -41,7 +41,7 @@ Rules that keep it layered:
 ## How to add things
 
 - **A check in the request path**: one entry in `STEPS` (`pipeline/handler.ts`), returning a `Result` or `null`; one test in `tests/pipeline.test.ts`. Keep the order comment accurate — order is the security model (mirrored in `docs/design.md`).
-- **A ban trigger**: call `banAddress(c, ip, kind, n)`; add the `kind` to `BanKind` in `store/bans.ts` and its wording in `actions/ban.ts`.
+- **A ban trigger**: in the request path call `banAddress(c, ip, kind, n)`; outside a request (a job) call `recordBan(env, deps, cfg, { ip, host, country, kind, fails })`. Add the `kind` to `BanKind` in `store/bans.ts` and its wording in `actions/ban.ts`.
 - **A notification event**: `emit(env, fetch, { kind, severity, title, text, link?, ip?, cc?, host? }, now)`. A new `kind` goes into `EventKind`/`POLICY_KINDS`/`KIND_LABELS`/`DEFAULT_POLICY` in `config/notifications.ts`, the `notifications:` table in README, and `digestEvent` if it should collapse in digests.
 - **A notification channel**: extend `ChannelType` in `config/channels.ts`, add one function + `case` in `notify/adapters.ts`, add the host to `NOTIFY_HOSTS` in `tests/helpers.ts`, add a payload assertion in `tests/notify.test.ts`.
 - **A recipe**: one entry in `src/recipes/index.ts` (verify the real app's failure status first; see CONTRIBUTING) and a row in README's recipe table.
