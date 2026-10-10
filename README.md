@@ -236,4 +236,4 @@ npm run check          # tsc + cf deploy --dry-run (compiles wicket.yaml, checks
 npm run dev            # cf dev (needs .dev.vars with the secrets above)
 ```
 
-[`AGENTS.md`](AGENTS.md) describes the layers and how to add a pipeline step, a ban trigger, a notification channel, a recipe or a setting. Contributions welcome, see [`CONTRIBUTING.md`](CONTRIBUTING.md). MIT.
+[`AGENTS.md`](AGENTS.md) describes the layers and how to add a pipeline step, a ban trigger, a notification channel, a traffic detector, a recipe or a setting. Contributions welcome, see [`CONTRIBUTING.md`](CONTRIBUTING.md). MIT.
