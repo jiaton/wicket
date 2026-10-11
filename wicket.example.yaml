@@ -39,6 +39,17 @@ hosts:
 allow_ips: []
 #  - 203.0.113.7
 
+# No fixed public IP? Name a dynamic-DNS hostname instead; its current A/AAAA records are
+# resolved every five minutes and count as allow-listed.
+allow_dns: []
+#  - home.example.duckdns.org
+
+# Any address that logged in with the owner password is trusted for this long: wrong
+# passwords from it are not counted, it is never banned, and it may log in during a
+# lockdown. This is what keeps a household on carrier-grade NAT (one address shared with
+# strangers) from being banned by a neighbour. 0 turns it off.
+trust_window: 24h
+
 # "host/path-prefix" entries that pass without credentials (webhooks, native clients).
 bypass: []
 #  - nas.example.com/webhooks/

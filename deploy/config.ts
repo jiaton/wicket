@@ -38,6 +38,9 @@ export interface WicketConfig {
   cookieDays: number;
   hosts: Record<string, HostEntry>;
   allowIps: string[];
+  allowDns: string[];
+  /** Seconds an address stays trusted after an owner login (0 = off). */
+  trustWindow: number;
   bypass: string[];
   limits: {
     password: Limit;
@@ -207,6 +210,12 @@ export function parseConfig(doc: unknown, recipes: ReadonlySet<string> | null = 
     cookieDays: num(doc.cookie_days, 'cookie_days', 365),
     hosts,
     allowIps: strings(doc.allow_ips, 'allow_ips'),
+    allowDns: strings(doc.allow_dns, 'allow_dns').map((n) => {
+      const name = n.toLowerCase();
+      if (!HOSTNAME.test(name)) fail(`allow_dns: "${n}" is not a valid hostname`);
+      return name;
+    }),
+    trustWindow: doc.trust_window === 0 ? 0 : duration(doc.trust_window, 'trust_window', 86_400),
     bypass,
     limits: {
       password: limit(limits.password, 'password', { count: 3, window: 86_400 }),
@@ -284,6 +293,8 @@ export function toVars(cfg: WicketConfig): Record<string, string> {
   }
   return {
     ALLOW_IPS: cfg.allowIps.join(','),
+    ALLOW_DNS: cfg.allowDns.join(','),
+    TRUST_SECONDS: String(cfg.trustWindow),
     BYPASS_PREFIXES: cfg.bypass.join(','),
     FAIL_LIMIT: String(cfg.limits.password.count),
     FAIL_WINDOW_SECONDS: String(cfg.limits.password.window),

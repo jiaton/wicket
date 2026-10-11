@@ -7,7 +7,7 @@ import { SlidingCounter } from '../core/counters';
 import { createFallbackTick } from '../cron';
 import { cookieValue, presentedToken, stripCredentials, wantsHtml } from '../core/credentials';
 import { verifySession } from '../core/crypto';
-import { clientIp, country, ipAllowed } from '../core/ip';
+import { clientIp, country } from '../core/ip';
 import { isBanned, isLockedDown } from '../store/bans';
 import { messagePage } from '../ui/pages';
 import type { Ctx, Deps, Outcome, Result, Step } from './context';
@@ -15,6 +15,8 @@ import { endpoints, loginForm } from './endpoints';
 import { registerFailure } from './failures';
 import { observe } from './observe';
 import { signatureStrike } from './signatures';
+import { createAllowCheck } from './allow';
+import { createTrustRefresher } from '../store/trust';
 import { html, json } from './respond';
 
 const ACME_PREFIX = '/.well-known/acme-challenge/';
@@ -31,7 +33,7 @@ export const STEPS: Step[] = [
   endpoints,
 
   // 2. Allow-listed addresses (e.g. the household's public IP) never see a password page.
-  async (c) => (ipAllowed(c.ip, c.cfg.allowIps) ? passthrough(c, 'allow') : null),
+  async (c) => ((await c.allowed()) ? passthrough(c, 'allow') : null),
 
   // 3. Banned addresses get nothing, on every host and every path.
   async (c) => ((await isBanned(c.env, c.ip)) ? [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'banned'] : null),
@@ -69,7 +71,9 @@ export const STEPS: Step[] = [
       Math.floor(c.deps.now() / 1000),
       c.cfg.cookieSeconds,
     );
-    return session ? passthrough(c, 'pass') : null;
+    if (!session) return null;
+    if (session.role === 'owner') c.trust();
+    return passthrough(c, 'pass');
   },
 
   // 10. Nothing presented. A few requests for known scanner paths/agents, or hundreds of
@@ -80,8 +84,7 @@ export const STEPS: Step[] = [
     if (strike) return strike;
     if (c.scanner.hit(c.ip, c.cfg.scanLimit, c.cfg.scanWindowSeconds * 1000)) {
       c.scanner.reset(c.ip);
-      await banAddress(c, c.ip, 'scan', c.cfg.scanLimit);
-      return [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'ban'];
+      if (await banAddress(c, c.ip, 'scan', c.cfg.scanLimit)) return [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'ban'];
     }
     if (!wantsHtml(c.req) || c.req.method !== 'GET') return [json({ error: 'password required' }, 401), 'reject'];
     return [loginForm(c, 401), 'reject'];
@@ -92,12 +95,30 @@ export const STEPS: Step[] = [
 export function createHandler(deps: Deps) {
   const scanner = new SlidingCounter(deps.now);
   const signatures = new SlidingCounter(deps.now);
+  const allowCheck = createAllowCheck(deps);
+  const refreshTrust = createTrustRefresher(deps.now);
   const fallbackTick = createFallbackTick(deps);
 
   return async function fetchHandler(req: Request, env: Env, exec: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     const started = deps.now();
-    const c: Ctx = { req, url, ip: clientIp(req), cc: country(req), env, cfg: settings(env), host: hostConfig(env, url.hostname), deps, exec, scanner, signatures };
+    const ip = clientIp(req);
+    const cfg = settings(env);
+    const c: Ctx = {
+      req,
+      url,
+      ip,
+      cc: country(req),
+      env,
+      cfg,
+      host: hostConfig(env, url.hostname),
+      deps,
+      exec,
+      scanner,
+      signatures,
+      allowed: () => allowCheck(env, cfg, ip),
+      trust: () => refreshTrust(env, ip, cfg.trustSeconds, exec),
+    };
 
     let result: Result = [json({ error: 'unhandled' }, 500), 'reject'];
     for (const step of STEPS) {

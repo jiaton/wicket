@@ -76,11 +76,17 @@ You need a Cloudflare zone, a Cloudflare Tunnel whose hostnames are proxied (ora
 ## Day to day
 
 - **Logging in.** Open any gated host, type the password once; the cookie covers every host under your domain for a year. `/__wicket/login` shows the form explicitly, `/__wicket/logout` clears the cookie. Changing `OWNER_PASSWORD` logs out every browser that used it, since the password is mixed into the cookie's key.
-- **At home.** Put your public IP in `allow_ips` and nobody in the house sees a password page; the login page still works there (the owner needs a cookie for the settings page), and wrong passwords from an allow-listed address are never counted.
+- **At home.** Put your public IP in `allow_ips` and nobody in the house sees a password page; the login page still works there (the owner needs a cookie for the settings page), and wrong passwords from an allow-listed address are never counted. No fixed IP? See below.
 - **A ban message** names the address, country, host and reason, with an **Unban** button (a signed link, valid seven days). Scanner bans arrive as one line in the digest instead. Nothing happened in the last hour → no digest.
 - **Settings page.** `/__wicket/settings`, owner password only. Status (channels and what is waiting for the next digest, lockdown with a *Lift* button, bans in store by kind), the notification policy (per-kind delivery, digest interval, *Send test message*; saves to KV, takes effect on the next event, *Reset to config* goes back to the file), and the newest bans with an **Unban** button each.
 - **Unbanning by hand.** The button on the settings page, the link in the message, or delete the KV key `ban:<ip>` (`cf kv keys delete --force --namespace-id <id> 'ban:<ip>'`; the hourly reconcile then drops the address from the IP list). If you ban yourself while testing (three wrong passwords from an address that is not allow-listed), the KV route is the way out.
 - **Changing things later.** New host or mode → edit `wicket.yaml`, redeploy, and make sure the hostname is proxied. New password or token → secrets, redeploy. Notification policy → the settings page, no redeploy. `git pull` + redeploy picks up new recipes.
+
+## No fixed public IP?
+
+- **Dynamic IP with a DDNS name**: `allow_dns: [home.example.duckdns.org]`. wicket resolves the name over DNS-over-HTTPS every five minutes and treats its current addresses like `allow_ips`. A failed lookup keeps the last answer.
+- **No public IP at all (carrier-grade NAT, one address shared with strangers)**: do *not* allow-list it. Instead rely on **trusted addresses**: any address that logs in with the owner password is trusted for `trust_window` (default 24 h, refreshed while the owner cookie is in use). Wrong passwords from a trusted address are not counted, it is never banned by any trigger, and it may log in during a lockdown. A neighbour on your NAT scanning the internet therefore cannot get your household banned, and you cannot ban yourself from a phone. The price is that an attacker sharing your exact address is immune for the window too; since a ban would have hit you as well, nothing is lost.
+- **Nothing configured**: everything still works, you just type the password once per browser; native clients use tokens or observe mode as usual.
 
 ## Configuration reference
 
@@ -99,6 +105,8 @@ hosts:
     watch: [{ path: /api/unlock, methods: [POST], status: [401] }]
 
 allow_ips: [203.0.113.7]          # pass without a password (login page still available); put your home IP here
+allow_dns: []                     # DDNS names resolved every 5 min, same effect as allow_ips
+trust_window: 24h                 # an address that logged in as owner is immune to counting/bans this long; 0 = off
 bypass: [nas.example.com/hooks/]  # host/prefix that passes without credentials
 
 limits:

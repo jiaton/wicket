@@ -1,7 +1,7 @@
 import { recordBan } from '../actions/ban';
 import type { Env } from '../config/env';
 import type { Settings } from '../config/settings';
-import { ipAllowed } from '../core/ip';
+import { createAllowCheck } from '../pipeline/allow';
 import type { Fetch } from '../notify';
 import { isBanned } from '../store/bans';
 import { hostList, type Address } from './addresses';
@@ -15,10 +15,12 @@ import { hostList, type Address } from './addresses';
  */
 export async function banSlowScanners(env: Env, doFetch: Fetch, now: number, cfg: Settings, addresses: Map<string, Address>): Promise<string[]> {
   const banned: string[] = [];
+  const deps = { fetch: doFetch, now: () => now };
+  const allowed = createAllowCheck(deps);
   for (const [ip, a] of addresses) {
     if (a.probes < cfg.scanningLimit || a.bannedNow) continue;
-    if (ipAllowed(ip, cfg.allowIps) || (await isBanned(env, ip))) continue;
-    await recordBan(env, { fetch: doFetch, now: () => now }, cfg, {
+    if ((await allowed(env, cfg, ip)) || (await isBanned(env, ip))) continue;
+    const ok = await recordBan(env, deps, cfg, {
       ip,
       host: hostList(a, (h) => h.probes).split(', ')[0] || '',
       country: a.country,
@@ -26,6 +28,7 @@ export async function banSlowScanners(env: Env, doFetch: Fetch, now: number, cfg
       fails: a.probes,
       reason: `${a.probes} anonymous probes in 5 min across the network (scanner)`,
     });
+    if (!ok) continue;
     a.bannedNow = true;
     banned.push(ip);
   }

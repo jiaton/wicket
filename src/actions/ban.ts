@@ -4,6 +4,7 @@ import type { Settings } from '../config/settings';
 import { signUnban } from '../core/crypto';
 import { emit } from '../notify';
 import { LOCKDOWN_IP, startLockdown, writeBan, type BanKind } from '../store/bans';
+import { isTrusted } from '../store/trust';
 import type { Ctx, Deps } from '../pipeline/context';
 
 const UNBAN_LINK_SECONDS = 7 * 86_400;
@@ -34,7 +35,11 @@ export interface BanInput {
  * IP list (edge block on all proxied hosts), notification with the Unban link. Scanner bans
  * are routine (`info`); bans from wrong credentials or failed app logins are `warn`.
  */
-export async function recordBan(env: Env, deps: Deps, cfg: Settings, b: BanInput): Promise<void> {
+export async function recordBan(env: Env, deps: Deps, cfg: Settings, b: BanInput): Promise<boolean> {
+  if (await isTrusted(env, b.ip)) {
+    console.warn('not banning trusted address', b.ip, b.kind);
+    return false;
+  }
   const now = deps.now();
   await writeBan(env, b.ip, { at: now, host: b.host, country: b.country, kind: b.kind });
   const reason =
@@ -60,12 +65,18 @@ export async function recordBan(env: Env, deps: Deps, cfg: Settings, b: BanInput
     },
     now,
   );
+  return true;
 }
 
-/** Request-path ban: the KV record lands before the response, the rest rides on waitUntil. */
-export async function banAddress(c: Ctx, ip: string, kind: BanKind, fails: number, reason?: string): Promise<void> {
+/**
+ * Request-path ban: the KV record lands before the response, the rest rides on waitUntil.
+ * Returns false (and does nothing) for a trusted address.
+ */
+export async function banAddress(c: Ctx, ip: string, kind: BanKind, fails: number, reason?: string): Promise<boolean> {
+  if (await isTrusted(c.env, ip)) return false;
   await writeBan(c.env, ip, { at: c.deps.now(), host: c.url.hostname, country: c.cc, kind });
   c.exec.waitUntil(recordBan(c.env, c.deps, c.cfg, { ip, host: c.url.hostname, country: c.cc, kind, fails, ...(reason ? { reason } : {}) }));
+  return true;
 }
 
 /** Pause password/token entry site-wide and tell the owner. */

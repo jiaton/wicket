@@ -46,6 +46,10 @@ export interface Ctx {
   scanner: SlidingCounter;
   /** Per-isolate counter of known scanner signature hits. */
   signatures: SlidingCounter;
+  /** Static allow list plus resolved `allow_dns` names (cached per isolate). */
+  allowed: () => Promise<boolean>;
+  /** Remembers that this address holds an owner session (throttled KV write). */
+  trust: () => void;
 }
 
 export type Result = [Response, Outcome];

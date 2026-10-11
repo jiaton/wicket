@@ -1,6 +1,7 @@
 import { banAddress, lockDown } from '../actions/ban';
 import { ENDPOINT_PREFIX } from '../core/credentials';
 import { bumpFailures, bumpGlobalFailures, clearFailures } from '../store/bans';
+import { isTrusted } from '../store/trust';
 import { loginPage, messagePage } from '../ui/pages';
 import type { Ctx, Result } from './context';
 import { html, json } from './respond';
@@ -10,6 +11,11 @@ import { html, json } from './respond';
  * guessing → lockdown) and the per-address one (→ permanent ban at FAIL_LIMIT).
  */
 export async function registerFailure(c: Ctx, kind: 'password' | 'token', next = '/'): Promise<Result> {
+  // An address with a recent owner session is the household, not an attacker: say "wrong", count nothing.
+  if (await isTrusted(c.env, c.ip)) {
+    if (kind === 'token') return [json({ error: 'invalid token' }, 401), 'fail'];
+    return [html(loginPage({ host: c.url.hostname, action: `${ENDPOINT_PREFIX}login`, next, error: 'Wrong password.' }), 401), 'fail'];
+  }
   const global = await bumpGlobalFailures(c.env, c.deps.now(), c.cfg.failGlobalWindowSeconds);
   if (global.n >= c.cfg.failGlobalLimit) {
     await lockDown(c, global.n, Math.round((c.deps.now() - global.since) / 60_000));

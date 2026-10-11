@@ -31,6 +31,9 @@ describe('wicket.yaml', () => {
     expect(cfg.limits.password).toEqual({ count: 3, window: 86_400 });
     expect(cfg.limits.rotating).toEqual({ count: 10, window: 600, lockdown: 3600 });
     expect(cfg.limits.scanning).toEqual({ count: 30 });
+    expect(cfg.allowDns).toEqual([]);
+    expect(cfg.trustWindow).toBe(86_400);
+    expect(toVars(cfg).TRUST_SECONDS).toBe('86400');
     expect(cfg.limits.signatures).toEqual({ count: 3, window: 600 });
     expect(cfg.signatures).toEqual({ paths: [], agents: [] });
     expect(toVars(cfg).SCANNING_LIMIT).toBe('30');
@@ -84,6 +87,8 @@ describe('wicket.yaml', () => {
     expect(bad(`${minimal}\nalerts: { admin_hosts: [other.example.test] }`)).toThrow(/admin_hosts/);
     expect(bad(`${minimal}\nalerts: { quiet_hours: "late" }`)).toThrow(/quiet_hours/);
     expect(bad(`${minimal}\nsignatures: { paths: ['(oops'] }`)).toThrow(/not a valid regular expression/);
+    expect(bad(`${minimal}\nallow_dns: ['not a host']`)).toThrow(/allow_dns/);
+    expect(parseConfig(parse(`${minimal}\nallow_dns: [Home.Example.DuckDNS.org]\ntrust_window: 0`), RECIPE_NAMES)).toMatchObject({ allowDns: ['home.example.duckdns.org'], trustWindow: 0 });
     expect(parseConfig(parse(`${minimal}\nlimits: { signatures: { count: 0 } }`), RECIPE_NAMES).limits.signatures.count).toBe(0);
   });
 

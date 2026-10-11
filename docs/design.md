@@ -27,7 +27,7 @@ Every routed hostname has a mode in the config:
 The Worker is an ordered list of steps (`src/pipeline/handler.ts`); the first one that answers wins. The order *is* the security model:
 
 1. wicket's own endpoints (`/__wicket/login|logout|unban`), so a banned owner can still use the signed unban link
-2. allow-listed addresses pass
+2. allow-listed addresses pass (`allow_ips`, plus `allow_dns` names resolved every five minutes)
 3. banned addresses get 403 on every host and path
 4. `/.well-known/acme-challenge/` passes (certificate renewals)
 5. observe-mode hosts: forward, watch, count
@@ -116,7 +116,7 @@ What wicket defends against:
 What it does not defend against:
 
 - **A leaked shared password.** Anyone with it is you (or your friend). Rotate it; that logs out every browser that used it.
-- **An attacker already inside your allow-listed network**, or on the same carrier-grade NAT address as you (allow list) or as a banned address (collateral ban).
+- **An attacker already inside your allow-listed network**, or sharing your exact address: an address that recently held an owner session is trusted (`trust_window`), so a stranger behind the same carrier-grade NAT is not counted or banned during that window. The alternative, banning the shared address, would lock you out with them.
 - **Attacks that bypass Cloudflare**: if your origin is reachable directly (open ports, a leaked origin IP), wicket never sees the traffic. Use the Tunnel so the origin has no inbound ports.
 - **Application-layer vulnerabilities on observe-mode hosts.** Those apps are exposed by choice; wicket only adds bans and detection.
 - **Timing side channels on KV.** Bans and counters are eventually consistent, so a burst within a few seconds may get one extra attempt before the ban lands; the edge list closes that gap once the API call completes.

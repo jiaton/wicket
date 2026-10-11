@@ -3,6 +3,9 @@ import { int, list, type Env } from './env';
 /** Parsed numeric/list vars. Everything has a default so a fresh deploy works. */
 export interface Settings {
   allowIps: string[];
+  allowDns: string[];
+  /** Recent owner sessions make an address immune to counting and bans for this long (0 = off). */
+  trustSeconds: number;
   bypass: { host: string; prefix: string }[];
   /** Wrong passwords/tokens from one address before a permanent ban. */
   failLimit: number;
@@ -39,6 +42,8 @@ export function settings(env: Env): Settings {
   const quiet = (env.QUIET_HOURS ?? '').match(/^(\d{1,2})-(\d{1,2})$/);
   return {
     allowIps: list(env.ALLOW_IPS),
+    allowDns: list(env.ALLOW_DNS).map((n) => n.toLowerCase()),
+    trustSeconds: env.TRUST_SECONDS === '0' ? 0 : int(env.TRUST_SECONDS, 86_400),
     bypass: list(env.BYPASS_PREFIXES).map((entry) => {
       const slash = entry.indexOf('/');
       return slash < 0 ? { host: entry, prefix: '/' } : { host: entry.slice(0, slash), prefix: entry.slice(slash) };

@@ -25,6 +25,6 @@ export async function signatureStrike(c: Ctx): Promise<Result | null> {
   if (!sig) return null;
   if (!c.signatures.hit(c.ip, c.cfg.signatureLimit, c.cfg.signatureWindowSeconds * 1000)) return null;
   c.signatures.reset(c.ip);
-  await banAddress(c, c.ip, 'scan', c.cfg.signatureLimit, `${c.cfg.signatureLimit} requests for known scanner paths/agents in ${c.cfg.signatureWindowSeconds}s (last: ${sig})`);
-  return [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'ban'];
+  const banned = await banAddress(c, c.ip, 'scan', c.cfg.signatureLimit, `${c.cfg.signatureLimit} requests for known scanner paths/agents in ${c.cfg.signatureWindowSeconds}s (last: ${sig})`);
+  return banned ? [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'ban'] : null;
 }

@@ -11,6 +11,10 @@ export interface Env {
 
   // ---- vars (non-secret, committed) ----
   ALLOW_IPS?: string;
+  /** Hostnames (dynamic DNS) whose current addresses count as allow-listed. */
+  ALLOW_DNS?: string;
+  /** Seconds an address stays trusted after an owner login; 0 disables. */
+  TRUST_SECONDS?: string;
   BYPASS_PREFIXES?: string;
   FAIL_LIMIT?: string;
   FAIL_WINDOW_SECONDS?: string;

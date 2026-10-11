@@ -52,7 +52,7 @@ export function fakeNetwork(handlers: Record<string, (req: Request) => Response 
   const doFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const req = input instanceof Request ? input : new Request(String(input), init);
     const url = new URL(req.url);
-    const NOTIFY_HOSTS = ['api.telegram.org', 'api.cloudflare.com', 'ntfy.example.test', 'discord.com', 'hooks.slack.com', 'hooks.example.test', 'apprise.example.test'];
+    const NOTIFY_HOSTS = ['api.telegram.org', 'api.cloudflare.com', 'cloudflare-dns.com', 'ntfy.example.test', 'discord.com', 'hooks.slack.com', 'hooks.example.test', 'apprise.example.test'];
     if (NOTIFY_HOSTS.includes(url.hostname)) {
       const text = await req.clone().text();
       let body: unknown = text || undefined;

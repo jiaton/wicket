@@ -3,11 +3,11 @@ import { parseChannels } from '../config/channels';
 import { DEFAULT_POLICY, isDelivery, mergePolicy, POLICY_KINDS, type NotifyPolicy } from '../config/notifications';
 import { cookieValue, ENDPOINT_PREFIX, safeNext, sameOrigin, setCookie } from '../core/credentials';
 import { safeEqual, signSession, signUnban, verifySession, type Role } from '../core/crypto';
-import { ipAllowed } from '../core/ip';
 import { emit, queueStatus } from '../notify';
 import { resolvePolicy } from '../notify/policy';
 import { clearBan, clearFailures, isBanned, isLockedDown, liftLockdown, listBans, LOCKDOWN_IP, readBan, readLockdown, type BanKind } from '../store/bans';
 import { clearNotifySettings, writeNotifySettings } from '../store/settings';
+import { isTrusted, markTrusted } from '../store/trust';
 import { loginPage, messagePage } from '../ui/pages';
 import { settingsPage, type BanRow } from '../ui/settings';
 import type { Ctx, Result } from './context';
@@ -41,7 +41,7 @@ async function login(c: Ctx): Promise<Result> {
   const { env, cfg, url, ip } = c;
   // Allow-listed addresses never need a cookie to pass, but the owner still needs one for
   // /__wicket/settings, so the password is checked; a wrong one is not a strike here.
-  const allowed = ipAllowed(ip, cfg.allowIps);
+  const allowed = (await c.allowed()) || (await isTrusted(env, ip));
   if (!allowed && (await isBanned(env, ip))) return [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'banned'];
   if (!allowed && (await isLockedDown(env))) {
     return [html(messagePage('Locked', 'Too many wrong passwords from the internet lately; password entry is paused for a while. Existing sessions keep working.'), 403), 'locked'];
@@ -72,6 +72,7 @@ async function login(c: Ctx): Promise<Result> {
   }
 
   c.exec.waitUntil(clearFailures(env, ip));
+  if (role === 'owner') c.exec.waitUntil(markTrusted(env, ip, cfg.trustSeconds));
   const issuedAt = Math.floor(c.deps.now() / 1000);
   const value = await signSession(env.COOKIE_SECRET, role === 'owner' ? env.OWNER_PASSWORD : env.FRIEND_PASSWORD!, role, issuedAt);
   return [
