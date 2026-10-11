@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolve } from 'node:path';
 import { parse } from 'yaml';
-import { ConfigError, duration, loadConfig, parseConfig, toCrons, toRoutes, toVars } from '../deploy/config';
+import { ConfigError, configSource, configText, duration, loadConfig, parseConfig, toCrons, toRoutes, toVars } from '../deploy/config';
 import { RECIPES } from '../src/recipes';
 import { hostConfig } from '../src/config/hosts';
 import { settings } from '../src/config/settings';
@@ -96,5 +96,21 @@ describe('wicket.yaml', () => {
     const cfg = loadConfig(resolve(process.cwd(), 'wicket.example.yaml'), RECIPE_NAMES);
     expect(cfg.zone).toBe('example.com');
     expect(Object.keys(cfg.hosts).length).toBeGreaterThan(2);
+  });
+
+  it('takes the whole config from $WICKET_YAML, as text or base64', () => {
+    expect(configText({})).toBeNull();
+    expect(configText({ WICKET_YAML: '  ' })).toBeNull();
+    expect(configText({ WICKET_YAML: minimal })).toEqual({ text: minimal.trim(), label: '$WICKET_YAML' });
+    const b64 = Buffer.from(minimal).toString('base64');
+    expect(configText({ WICKET_YAML: b64 })).toEqual({ text: minimal.trim(), label: '$WICKET_YAML (base64)' });
+    expect(() => configText({ WICKET_YAML: 'hosts: []' })).toThrow(/neither/);
+    process.env.WICKET_YAML = b64;
+    try {
+      expect(loadConfig(undefined, RECIPE_NAMES).zone).toBe('example.test');
+      expect(configSource()).toBe('$WICKET_YAML (base64)');
+    } finally {
+      delete process.env.WICKET_YAML;
+    }
   });
 });

@@ -60,6 +60,7 @@ Rules that keep it layered:
 - A wrong `Authorization: Bearer` is not a strike (it may be the origin's own auth); wrong `X-Wicket-Token` / `wicket_token` / `x-access-token` / `X-API-Key` / `?token=` are. Gating a host whose clients send those headers requires registering their values in `API_TOKENS` first.
 - Nothing deployment-specific in the repo: no real hostnames, IPs, namespace or list ids. `wicket.yaml` is git-ignored; the owner's lives in dotfiles (`projects/wicket/wicket.yaml`, symlinked into this checkout) together with `env.sh` (secrets).
 - Deploy with `cf deploy --secrets-file` (for the owner: `wicket-apply-secrets` in dotfiles, also run by its pre-push hook when `env.sh` or `wicket.yaml` change). **A bare `cf deploy` / `npm run deploy` wipes every secret** in cf 1.0.0-beta.5, so `npm run deploy` refuses. Cloudflare-side changes use `cf …`; deleting Access apps and editing zone WAF rulesets are blocked by the permission classifier and must be run by the owner.
+- Three config sources, resolved in `deploy/config.ts`: `$WICKET_YAML` (the text or its base64; Workers Builds users put it in a build variable so the fork stays clean) → `$WICKET_CONFIG` (a path; what `wicket-apply-secrets` sets) → `./wicket.yaml` → the example. `deploy/wrangler.ts` is the Workers Builds build command: it also finds or creates the KV namespace `<worker>-STORE` when `kv_namespace_id` is empty, so repeated builds reuse one namespace. Keep all three paths working when touching config loading.
 
 ## Forbidden
 

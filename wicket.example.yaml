@@ -93,8 +93,8 @@ notifications:
   digest_every: 1h
 
 cloudflare:
-  # cf deploy provisions a namespace on the first deploy when this is empty; wrangler needs
-  # the id of a namespace you created (`wrangler kv namespace create STORE`).
+  # Empty: cf deploy provisions a namespace on the first deploy, and `npm run config:wrangler`
+  # finds or creates one named wicket-STORE. Set it to pin an existing namespace.
   kv_namespace_id: ""
   analytics_dataset: wicket_traffic
   cron: "*/5 * * * *"            # alerts + notification digests

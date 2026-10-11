@@ -29,7 +29,7 @@ Hosts in `wicket.yaml` get a Workers route. For a **gated** host the Worker answ
 
 ## Setup
 
-You need a Cloudflare zone, a Cloudflare Tunnel whose hostnames are proxied (orange cloud) DNS records, Node 22+, and either Cloudflare's `cf` CLI (`npm i -g cf && cf auth login`) or wrangler.
+You need a Cloudflare zone, a Cloudflare Tunnel whose hostnames are proxied (orange cloud) DNS records, Node 22+, and either Cloudflare's `cf` CLI (`npm i -g cf && cf auth login`) or wrangler. No terminal at all? See [Deploy from the dashboard](#deploy-from-the-dashboard-no-cli).
 
 1. **Configure.**
    ```sh
@@ -61,7 +61,7 @@ You need a Cloudflare zone, a Cloudflare Tunnel whose hostnames are proxied (ora
    npm run config:wrangler          # writes wrangler.jsonc from wicket.yaml
    npx wrangler deploy && npx wrangler secret bulk secrets.json
    ```
-   > With cf 1.0.0-beta.x a deploy **without** `--secrets-file` uploads a version with no secrets, and wicket then rejects every password until you re-apply them. `npm run deploy` refuses for that reason; always pass the file. The KV namespace is provisioned on the first `cf deploy` (wrangler users create one with `wrangler kv namespace create STORE` and put its id in `wicket.yaml`). Analytics Engine needs the account switch flipped once in the dashboard (*Workers & Pages → Analytics Engine → Enable*).
+   > With cf 1.0.0-beta.x a deploy **without** `--secrets-file` uploads a version with no secrets, and wicket then rejects every password until you re-apply them. `npm run deploy` refuses for that reason; always pass the file. The KV namespace is provisioned on the first deploy with either tool (`config:wrangler` finds or creates one named `wicket-STORE` when `kv_namespace_id` is empty). Analytics Engine needs the account switch flipped once in the dashboard (*Workers & Pages → Analytics Engine → Enable*).
 
 4. **Edge bans (recommended).** Create an account IP list (*Manage Account → Configurations → Lists*, or `cf rules lists create --name wicket_banned --kind ip`) and a WAF custom rule on the zone: `ip.src in $wicket_banned` → Block. Put the list id in `CF_LIST_ID`. Banned addresses are then dropped at the edge for every proxied host, not just the routed ones, and before the Worker runs.
 
@@ -72,6 +72,21 @@ You need a Cloudflare zone, a Cloudflare Tunnel whose hostnames are proxied (ora
        client_ip_headers Cf-Connecting-Ip
    }
    ```
+
+## Deploy from the dashboard (no CLI)
+
+Cloudflare builds and deploys your fork itself (Workers Builds), and every `Sync fork` on GitHub ships the update. Your config lives in a build variable, so the fork stays free of your hosts and addresses.
+
+1. **Fork** this repository on GitHub.
+2. In the dashboard open *Workers & Pages → Create → Continue with GitHub* and pick the fork. Set
+   - build command: `npm run config:wrangler`
+   - deploy command: `npx wrangler deploy`
+   - build variable `WICKET_YAML`: your whole `wicket.yaml` (start from [`wicket.example.yaml`](wicket.example.yaml)). Paste the text; if the field will not take line breaks, paste `base64 -w0 wicket.yaml` instead, both are accepted.
+3. **Save and Deploy.** The build compiles the YAML into routes, crons and variables, creates the KV namespace `wicket-STORE` and deploys. Routes on your zone work because the build token has *Workers Routes: Edit*.
+4. **Secrets.** Open the Worker, *Settings → Variables and Secrets*, add `COOKIE_SECRET` and `OWNER_PASSWORD` (type *Secret*) and whatever else you want from the table above. They take effect on the next request, no rebuild; until they exist the login page answers 503.
+5. Flip the Analytics Engine switch, create the IP list and WAF rule for edge bans (step 4 above) and make your reverse proxy trust `Cf-Connecting-Ip` (step 5).
+
+Later: a new host or limit → edit the build variable and start a build from the Worker's *Deployments* tab; new recipes → *Sync fork* on GitHub. `wrangler deploy` keeps the secrets, unlike a bare `cf deploy`.
 
 ## Day to day
 

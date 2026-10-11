@@ -275,12 +275,41 @@ export function configPath(cwd = process.cwd()): string {
   return resolve(cwd, EXAMPLE_FILE);
 }
 
-export function loadConfig(path = configPath(), recipes: ReadonlySet<string> | null = null): WicketConfig {
+/**
+ * `$WICKET_YAML` carries the whole config as text, for builds that have no file to read
+ * (Workers Builds, where the fork must not contain the config): the YAML itself, or its
+ * base64 when the variable field cannot hold newlines. Decoded only when the raw text
+ * is not YAML with a `zone` key, so a plain config is never mistaken for base64.
+ */
+export function configText(env: NodeJS.ProcessEnv = process.env): { text: string; label: string } | null {
+  const raw = env.WICKET_YAML?.trim();
+  if (!raw) return null;
+  const isConfig = (s: string) => {
+    try {
+      const doc = parse(s);
+      return typeof doc === 'object' && doc !== null && 'zone' in doc;
+    } catch {
+      return false;
+    }
+  };
+  if (isConfig(raw)) return { text: raw, label: '$WICKET_YAML' };
+  const decoded = Buffer.from(raw, 'base64').toString('utf8').trim();
+  if (isConfig(decoded)) return { text: decoded, label: '$WICKET_YAML (base64)' };
+  fail('$WICKET_YAML is neither wicket.yaml text nor its base64');
+}
+
+/** Where the config comes from, for log lines and generated-file headers. */
+export function configSource(): string {
+  return configText()?.label ?? configPath();
+}
+
+export function loadConfig(path?: string, recipes: ReadonlySet<string> | null = null): WicketConfig {
   let doc: unknown;
   try {
-    doc = parse(readFileSync(path, 'utf8'));
+    const inline = path === undefined ? configText() : null;
+    doc = parse(inline ? inline.text : readFileSync(path ?? configPath(), 'utf8'));
   } catch (err) {
-    fail(`cannot read ${path}: ${(err as Error).message}`);
+    fail(`cannot read ${path ?? configSource()}: ${(err as Error).message}`);
   }
   return parseConfig(doc, recipes);
 }
