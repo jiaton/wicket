@@ -44,10 +44,10 @@ Rules that keep it layered:
 
 - **A check in the request path**: one entry in `STEPS` (`pipeline/handler.ts`), returning a `Result` or `null`; one test in `tests/pipeline.test.ts`. Keep the order comment accurate — order is the security model (mirrored in `docs/design.md`).
 - **A ban trigger**: in the request path call `banAddress(c, ip, kind, n)`; outside a request (a job) call `recordBan(env, deps, cfg, { ip, host, country, kind, fails })`. Add the `kind` to `BanKind` in `store/bans.ts` and its wording in `actions/ban.ts`.
-- **A notification event**: `emit(env, fetch, { kind, severity, title, text, link?, ip?, cc?, host? }, now)`. A new `kind` goes into `EventKind`/`POLICY_KINDS`/`KIND_LABELS`/`DEFAULT_POLICY` in `config/notifications.ts`, the `notifications:` table in README, and `digestEvent` if it should collapse in digests.
+- **A notification event**: `emit(env, fetch, { kind, severity, title, text, link?, ip?, cc?, host? }, now)`. A new `kind` goes into `EventKind`/`POLICY_KINDS`/`KIND_LABELS`/`DEFAULT_POLICY` in `config/notifications.ts`, the `notifications:` table in docs/configuration.md, and `digestEvent` if it should collapse in digests.
 - **A notification channel**: extend `ChannelType` in `config/channels.ts`, add one function + `case` in `notify/adapters.ts`, add the host to `NOTIFY_HOSTS` in `tests/helpers.ts`, add a payload assertion in `tests/notify.test.ts`.
-- **A recipe**: one entry in `src/recipes/index.ts` (verify the real app's failure status first; see CONTRIBUTING) and a row in README's recipe table.
-- **A setting**: a key in `wicket.example.yaml` + `deploy/config.ts` (`WicketConfig`, `parseConfig`, `toVars`), the field in `config/env.ts`, the parsed default in `config/settings.ts`, a line in README's configuration reference, an assertion in `tests/config.test.ts`.
+- **A recipe**: one entry in `src/recipes/index.ts` (verify the real app's failure status first; see CONTRIBUTING) and a row in the recipe table in docs/configuration.md.
+- **A setting**: a key in `wicket.example.yaml` + `deploy/config.ts` (`WicketConfig`, `parseConfig`, `toVars`), the field in `config/env.ts`, the parsed default in `config/settings.ts`, a line in docs/configuration.md, an assertion in `tests/config.test.ts`.
 - **A detection in the traffic analysis**: one file in `src/cron/detectors/` exporting a `Detector` (`id`, `run(ctx) → Alert[]`), one entry in `DETECTORS`, one test in `tests/detectors.test.ts` using a fake `DetectorContext`. A detector reads `ctx.addresses` (the window folded per address) or runs its own `ctx.query`; it never sends anything — `runAnalysis` dedups by `key` and emits one event per `kind`, so pick the `kind` that matches the severity tier (`credentials` > `app_logins` > `traffic`).
 - **A periodic job**: add it to `fiveMinuteJob` or `hourlyJob` in `src/cron/index.ts`; both run under a run-once lock from the cron *and* from the request-path fallback (Cloudflare's cron delivery has gone silent for this Worker before; never rely on `scheduled` alone). A new cadence needs a schedule in `wicket.yaml` (`toCrons`), a branch in `index.ts` and a timer in `createFallbackTick`.
 
@@ -65,7 +65,7 @@ Rules that keep it layered:
 
 ## Deploying for a user (agent checklist)
 
-When a user asks you to deploy wicket for them, follow README's *Setup* and this list:
+When a user asks you to deploy wicket for them, follow README's *Setup* (details in docs/configuration.md) and this list:
 
 1. `cp wicket.example.yaml wicket.yaml`; fill `zone`, `hosts` (mode and recipe per host), `allow_ips` / `allow_dns`, notifications. Every hostname must be a proxied DNS record inside the zone.
 2. `secrets.json`: `COOKIE_SECRET` from `openssl rand -hex 32`; `OWNER_PASSWORD` from the user, never invented or echoed back; the rest optional.

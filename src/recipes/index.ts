@@ -10,7 +10,7 @@ import type { WatchRule } from '../config/hosts';
  * legitimate users. Every entry below was checked against the app's handler source
  * (2026-10); the comment names the evidence. Apps whose failure is a 200 or a redirect
  * (Home Assistant's UI login, Nextcloud, Gitea/Forgejo, Miniflux, BookStack, Sonarr/Radarr,
- * code-server, WordPress, …) are listed as not detectable in README and rely on their own lockout.
+ * code-server, WordPress, …) are listed as not detectable in docs/configuration.md and rely on their own lockout.
  *
  * Contributing a recipe: see CONTRIBUTING.md.
  */

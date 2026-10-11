@@ -16,7 +16,7 @@ Recipes are the most useful thing to contribute. To add one:
 
 1. Install the app, fail a login on purpose, and record the request path, method and the **response status**. A failure that is a `200` with an error body cannot be detected by wicket; say so in the recipe comment and point at the app's own lockout instead.
 2. Check what an anonymous page load or the app's background polling does on the same path. If it produces the same status, narrow the rule (method, longer prefix) or drop it; a recipe that bans legitimate users is worse than none.
-3. Add the entry to `src/recipes/index.ts` with a one-line comment stating the evidence, and a row to the recipe table in `README.md`.
+3. Add the entry to `src/recipes/index.ts` with a one-line comment stating the evidence, and a row to the recipe table in `docs/configuration.md`.
 
 ## Pull requests
 
