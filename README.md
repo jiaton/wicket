@@ -50,16 +50,23 @@ You need a Cloudflare zone, a Cloudflare Tunnel whose hostnames are proxied (ora
    | `CF_API_TOKEN`, `CF_ACCOUNT_ID` | optional; an API token with *Account Analytics: Read* (traffic alerts) and *Account Filter Lists: Edit* (edge bans) |
    | `CF_LIST_ID` | optional; the IP list from step 4 |
 
-   Without `OWNER_PASSWORD` or `COOKIE_SECRET` the login page answers 503: wicket fails closed.
+   Without `OWNER_PASSWORD` or `COOKIE_SECRET` the login page answers 503: wicket fails closed. A minimal `secrets.json`:
+   ```json
+   { "COOKIE_SECRET": "<openssl rand -hex 32>", "OWNER_PASSWORD": "<your password>", "TELEGRAM_BOT_TOKEN": "<bot token>", "TELEGRAM_CHAT_ID": "<chat id>" }
+   ```
 
 3. **Deploy.**
    ```sh
+   npm run check                    # tsc + a dry run: validates wicket.yaml and the bindings, uploads nothing
+
    # cf CLI — code, config and secrets in one shot
    cf deploy --secrets-file secrets.json
 
    # or wrangler
    npm run config:wrangler          # writes wrangler.jsonc from wicket.yaml
    npx wrangler deploy && npx wrangler secret bulk secrets.json
+
+   curl -sI https://<a gated host>/__wicket/login | head -1   # HTTP/2 200 = live; 503 = secrets missing
    ```
    > With cf 1.0.0-beta.x a deploy **without** `--secrets-file` uploads a version with no secrets, and wicket then rejects every password until you re-apply them. `npm run deploy` refuses for that reason; always pass the file. The KV namespace is provisioned on the first deploy with either tool (`config:wrangler` finds or creates one named `wicket-STORE` when `kv_namespace_id` is empty). Analytics Engine needs the account switch flipped once in the dashboard (*Workers & Pages → Analytics Engine → Enable*).
 
@@ -72,6 +79,14 @@ You need a Cloudflare zone, a Cloudflare Tunnel whose hostnames are proxied (ora
        client_ip_headers Cf-Connecting-Ip
    }
    ```
+
+## Deploying with a coding agent
+
+The steps above are written so that a coding agent (Claude Code, Codex, …) running in a clone of this repository can do the deploy for you. Give it something like:
+
+> Deploy wicket for my zone `example.com` following README.md. Gated hosts: nas, docker. Observe host: ha with the home-assistant recipe. My home IP is 203.0.113.9. Telegram bot token and chat id are in my notes; ask me for the owner password. Use the `cf` CLI.
+
+What the agent can do on its own: write `wicket.yaml` from the example, generate `COOKIE_SECRET`, write `secrets.json`, run `npm run check`, deploy, create the IP list with `cf rules lists create`, and verify with the `curl` above. What needs you: `cf auth login` (it opens a browser), the owner password, the Analytics Engine switch in the dashboard, and the WAF custom rule on the zone. Three rules for the agent, also in [`AGENTS.md`](AGENTS.md): never run `cf deploy` without `--secrets-file` (it uploads a version with no secrets), never commit `wicket.yaml` or `secrets.json` (both are git-ignored; keep it that way), and never put the owner's hostnames, addresses or passwords into any file that is tracked.
 
 ## Deploy from the dashboard (no CLI)
 

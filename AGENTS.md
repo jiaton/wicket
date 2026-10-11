@@ -63,6 +63,17 @@ Rules that keep it layered:
 - Deploy with `cf deploy --secrets-file` (for the owner: `wicket-apply-secrets` in dotfiles, also run by its pre-push hook when `env.sh` or `wicket.yaml` change). **A bare `cf deploy` / `npm run deploy` wipes every secret** in cf 1.0.0-beta.5, so `npm run deploy` refuses. Cloudflare-side changes use `cf …`; deleting Access apps and editing zone WAF rulesets are blocked by the permission classifier and must be run by the owner.
 - Three config sources, resolved in `deploy/config.ts`: `$WICKET_YAML` (the text or its base64; Workers Builds users put it in a build variable so the fork stays clean) → `$WICKET_CONFIG` (a path; what `wicket-apply-secrets` sets) → `./wicket.yaml` → the example. `deploy/wrangler.ts` is the Workers Builds build command: it also finds or creates the KV namespace `<worker>-STORE` when `kv_namespace_id` is empty, so repeated builds reuse one namespace. Keep all three paths working when touching config loading.
 
+## Deploying for a user (agent checklist)
+
+When a user asks you to deploy wicket for them, follow README's *Setup* and this list:
+
+1. `cp wicket.example.yaml wicket.yaml`; fill `zone`, `hosts` (mode and recipe per host), `allow_ips` / `allow_dns`, notifications. Every hostname must be a proxied DNS record inside the zone.
+2. `secrets.json`: `COOKIE_SECRET` from `openssl rand -hex 32`; `OWNER_PASSWORD` from the user, never invented or echoed back; the rest optional.
+3. `npm run check` must pass before any deploy. Then `cf deploy --secrets-file secrets.json` (or the wrangler pair). Never a bare `cf deploy`.
+4. Verify: `curl -sI https://<gated host>/__wicket/login` answers 200. 503 means the secrets did not land.
+5. Things only the user can do: `cf auth login`, the Analytics Engine switch (*Workers & Pages → Analytics Engine → Enable*), the zone WAF rule `ip.src in $wicket_banned` → Block. Say so instead of trying.
+6. Leave `wicket.yaml` and `secrets.json` untracked, and nothing deployment-specific in tracked files.
+
 ## Forbidden
 
 - Cloudflare Access, email OTP, or any per-browser identity flow (the owner rejected them).
