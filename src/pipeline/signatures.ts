@@ -14,17 +14,34 @@ function extraSets(c: Ctx): SignatureSets {
 }
 
 /**
- * Called for an anonymous request that was rejected (gated) or answered 4xx by the origin
- * (observe). If the path or User-Agent is a known scanner signature, counts it per address
- * in isolate memory; at `limits.signatures` hits inside the window the address is banned
- * as a scanner. Returns the ban response, or null to let the normal answer go out.
+ * Which signatures count. `all`: paths, files and User-Agents (a request wicket or the app
+ * rejected). `files`: only the restricted-files class (`/.env`, `/.git/…`, credentials and
+ * configs), for a request an observe host answered 2xx/3xx: a single-page app serves its
+ * index for `/.env` too, and that request is still a scanner's — whereas `/wp-login.php`
+ * answered 200 is a blog with a login page, and a scanner-like User-Agent on a page that
+ * worked is not evidence.
  */
-export async function signatureStrike(c: Ctx): Promise<Result | null> {
+export type SignatureScope = 'all' | 'files';
+
+/** The signature this request matches within `scope`, or null. */
+export function scannerSignature(c: Ctx, scope: SignatureScope = 'all'): string | null {
+  const sig = matchSignature(c.url.pathname, scope === 'all' ? (c.req.headers.get('user-agent') ?? '') : '', extraSets(c));
+  if (!sig) return null;
+  return scope === 'all' || sig.startsWith('file ') ? sig : null;
+}
+
+/**
+ * Called for an anonymous request that was rejected (gated) or passed through an observe
+ * host. If the request matches a known scanner signature within `scope`, counts it per
+ * address in isolate memory; at `limits.signatures` hits inside the window the address is
+ * banned as a scanner. Returns the ban response, or null to let the normal answer go out.
+ */
+export async function signatureStrike(c: Ctx, scope: SignatureScope = 'all'): Promise<Result | null> {
   if (!c.cfg.signatureLimit) return null;
-  const sig = matchSignature(c.url.pathname, c.req.headers.get('user-agent') ?? '', extraSets(c));
+  const sig = scannerSignature(c, scope);
   if (!sig) return null;
   if (!c.signatures.hit(c.ip, c.cfg.signatureLimit, c.cfg.signatureWindowSeconds * 1000)) return null;
   c.signatures.reset(c.ip);
   const banned = await banAddress(c, c.ip, 'scan', c.cfg.signatureLimit, `${c.cfg.signatureLimit} requests for known scanner paths/agents in ${c.cfg.signatureWindowSeconds}s (last: ${sig})`);
-  return banned ? [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'ban'] : null;
+  return banned ? [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'ban-scan'] : null;
 }

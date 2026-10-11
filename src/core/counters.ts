@@ -34,3 +34,33 @@ export class SlidingCounter {
     this.entries.delete(key);
   }
 }
+
+/** Per-isolate set of keys that expire: "seen in the last N ms". Bounded like SlidingCounter. */
+export class RecentSet {
+  private readonly until = new Map<string, number>();
+  private readonly now: () => number;
+  private readonly maxKeys: number;
+
+  constructor(now: () => number, maxKeys = 5000) {
+    this.now = now;
+    this.maxKeys = maxKeys;
+  }
+
+  add(key: string, ttlMs: number): void {
+    const now = this.now();
+    if (this.until.size > this.maxKeys) {
+      for (const [k, t] of this.until) if (t <= now) this.until.delete(k);
+    }
+    this.until.set(key, now + ttlMs);
+  }
+
+  has(key: string): boolean {
+    const t = this.until.get(key);
+    if (t === undefined) return false;
+    if (t <= this.now()) {
+      this.until.delete(key);
+      return false;
+    }
+    return true;
+  }
+}

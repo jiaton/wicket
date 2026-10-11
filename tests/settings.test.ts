@@ -30,6 +30,7 @@ describe('notification policy', () => {
     const env = makeEnv(kv, new FakeAnalytics(), { NOTIFY_POLICY_JSON: JSON.stringify({ kinds: { scanner: 'digest', unban: 'off' }, digestSeconds: 1800 }) });
     await emit(env, net.doFetch, scannerBan, NOW);
     await emit(env, net.doFetch, { ...scannerBan, ip: '1.1.1.2' }, NOW + 1000);
+    await emit(env, net.doFetch, scannerBan, NOW + 1500); // the same ban recorded again from another data centre: one line, counted once
     await emit(env, net.doFetch, credentialBan, NOW + 2000);
     await emit(env, net.doFetch, { kind: 'unban', severity: 'info', title: 't: unbanned', text: '' }, NOW + 3000);
     expect(net.telegram().map((m) => (m.body as { text: string }).text)).toEqual(['<b>t: banned 2.2.2.2 (US)</b>\n3 wrong passwords']);

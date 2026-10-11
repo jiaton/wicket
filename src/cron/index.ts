@@ -4,13 +4,14 @@ import { flushQueues, type Fetch } from '../notify';
 import { backfillBanMetadata } from '../store/bans';
 import { acquireJobLock } from '../store/locks';
 import { runAnalysis } from './analyze';
-import { reconcile } from './reconcile';
+import { reconcile, repairEdge } from './reconcile';
 
 export const TICK_SECONDS = 300;
 export const RECONCILE_SECONDS = 3600;
 
-/** The five-minute job: traffic alerts, then the batched notification digests. */
+/** The five-minute job: failed IP-list calls retried, traffic alerts, then the batched notification digests. */
 export async function fiveMinuteJob(env: Env, doFetch: Fetch, now: number): Promise<void> {
+  await repairEdge(env, doFetch);
   await runAnalysis(env, doFetch, now);
   await flushQueues(env, doFetch, settings(env).siteName, now);
 }

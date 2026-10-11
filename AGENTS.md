@@ -13,12 +13,12 @@ src/pipeline/         request handling as an ordered list of steps (handler.ts: 
   context.ts          Ctx (everything a step may need), Deps (injected fetch + clock), Outcome, Step
   endpoints.ts        /__wicket/login|logout|unban|settings (settings = owner-only page: status, policy, recent bans with unban/lift)
   observe.ts          observe mode: passthrough + watch rules + scanner
-  signatures.ts       known scanner path/agent → per-isolate counter → ban (used by step 10 and observe)
+  signatures.ts       known scanner path/agent → per-isolate counter → ban (used by step 10 and observe; scope `files` for 2xx answers on observe hosts)
   allow.ts            allow list = allow_ips + allow_dns (DoH, cached 5 min per isolate); also used by the slow-scanner job
   failures.ts         wrong password/token → counters → ban or 401
   respond.ts          html()/json() helpers
-src/actions/ban.ts    the one exit for every ban trigger: KV + IP list + notification; lockdown
-src/store/            bans.ts (bans with `kind` in KV metadata, counters, lockdown), locks.ts (job:* run-once locks), settings.ts (settings:notify), trust.ts (trust:<ip> = recent owner session → never counted or banned) — every KV key, behind named functions
+src/actions/ban.ts    the one exit for every ban trigger: KV once + IP list (failures queued in `edgeq`) + notification; request-path bans also go into the isolate's `recentBans`; lockdown
+src/store/            bans.ts (bans with `kind` in KV metadata, counters, lockdown, `edgeq` pending list calls), locks.ts (job:* run-once locks), settings.ts (settings:notify), trust.ts (trust:<ip> = recent owner session → never counted or banned) — every KV key, behind named functions
 src/notify/           events with kind + severity → policy (policy.ts: defaults ← NOTIFY_POLICY_JSON ← saved settings) → channels; digests queued in KV; adapters.ts has one function per channel type
 src/cron/             index.ts (jobs, run-once locks, request-path fallback tick), reconcile.ts (KV bans ↔ IP list)
   analyze.ts          one base query → addresses.ts folds it per address → slow-scanner.ts bans (acts) → every detector (observes) → dedup → one event per kind
@@ -54,7 +54,8 @@ Rules that keep it layered:
 ## Conventions
 
 - TypeScript with `erasableSyntaxOnly` (no parameter properties, no enums). Comments, docs and UI strings in English.
-- Every ban goes through `banAddress`/`recordBan`, which refuse trusted addresses (`store/trust.ts`); every allow-list decision goes through `c.allowed()` / `createAllowCheck`. Do not call `ipAllowed` or `writeBan` directly from a new feature.
+- Every ban goes through `banAddress`/`recordBan`, which refuse trusted addresses (`store/trust.ts`), write KV exactly once and remember request-path bans in `c.recentBans` (step 3 consults it before KV, whose cached misses otherwise cause repeat bans); every allow-list decision goes through `c.allowed()` / `createAllowCheck`. Do not call `ipAllowed` or `writeBan` directly from a new feature. A ban's request reports its kind as the outcome (`ban` password/token, `ban-scan`, `ban-origin`); `cron/addresses.ts` folds on that, so a new ban kind needs a new outcome, not a reuse of `ban`.
+- KV writes are the scarce resource on the free plan (1,000 a day; the five-minute lock alone is 288). A new feature that writes per request or per event needs a reason in its comment and, where possible, isolate memory (`core/counters.ts`) or a single aggregated key instead.
 - Fail closed: missing secrets disable login (503); malformed `HOSTS_JSON` means `gated`; unknown tokens never pass. `deploy/config.ts` rejects a bad `wicket.yaml` so the deploy stops.
 - Never forward wicket credentials to the origin (`stripCredentials`). Never log secrets.
 - A wrong `Authorization: Bearer` is not a strike (it may be the origin's own auth); wrong `X-Wicket-Token` / `wicket_token` / `x-access-token` / `X-API-Key` / `?token=` are. Gating a host whose clients send those headers requires registering their values in `API_TOKENS` first.

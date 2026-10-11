@@ -22,6 +22,8 @@ export interface ListItem {
   id: string;
   ip: string;
   comment: string;
+  /** Milliseconds since epoch, from the API's `created_on`; undefined when absent. */
+  createdAt?: number;
 }
 
 /** Appends the IP to the account IP list; a zone WAF rule referencing the list blocks it at the edge. */
@@ -29,16 +31,27 @@ export async function listAdd(env: Env, doFetch: Fetch, ip: string, comment: str
   return listAddMany(env, doFetch, [{ ip, comment }]);
 }
 
-/** One POST for several addresses (the reconcile cron). */
-export async function listAddMany(env: Env, doFetch: Fetch, items: { ip: string; comment: string }[]): Promise<boolean> {
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * One POST for several addresses. The Lists API takes one operation per list at a time and
+ * answers 429 to the next one, which happens whenever two bans land within seconds; one
+ * short retry covers that. Anything still failing is left to the pending-edge retry.
+ */
+export async function listAddMany(env: Env, doFetch: Fetch, items: { ip: string; comment: string }[], retryDelayMs = 2000): Promise<boolean> {
   if (!configured(env) || !items.length) return false;
-  const res = await doFetch(itemsUrl(env), {
-    method: 'POST',
-    headers: headers(env),
-    body: JSON.stringify(items.map((it) => ({ ip: it.ip, comment: it.comment.slice(0, 500) }))),
-  });
-  if (!res.ok) console.warn('cf list add failed', res.status, (await res.text()).slice(0, 200));
-  return res.ok;
+  const body = JSON.stringify(items.map((it) => ({ ip: it.ip, comment: it.comment.slice(0, 500) })));
+  for (let attempt = 0; ; attempt++) {
+    const res = await doFetch(itemsUrl(env), { method: 'POST', headers: headers(env), body });
+    if (res.ok) return true;
+    const text = (await res.text()).slice(0, 200);
+    if (res.status === 429 && attempt === 0) {
+      await sleep(retryDelayMs);
+      continue;
+    }
+    console.warn('cf list add failed', res.status, text);
+    return false;
+  }
 }
 
 /** Removes every list item whose ip matches. */
@@ -70,8 +83,12 @@ export async function listItems(env: Env, doFetch: Fetch): Promise<ListItem[] | 
       console.warn('cf list read failed', res.status, (await res.text()).slice(0, 200));
       return null;
     }
-    const data = (await res.json()) as { result?: { id: string; ip?: string; comment?: string }[]; result_info?: { cursors?: { after?: string } } };
-    for (const it of data.result ?? []) if (it.ip) items.push({ id: it.id, ip: it.ip, comment: it.comment ?? '' });
+    const data = (await res.json()) as { result?: { id: string; ip?: string; comment?: string; created_on?: string }[]; result_info?: { cursors?: { after?: string } } };
+    for (const it of data.result ?? []) {
+      if (!it.ip) continue;
+      const createdAt = it.created_on ? Date.parse(it.created_on) : NaN;
+      items.push({ id: it.id, ip: it.ip, comment: it.comment ?? '', ...(Number.isFinite(createdAt) ? { createdAt } : {}) });
+    }
     cursor = data.result_info?.cursors?.after || undefined;
   } while (cursor);
   return items;

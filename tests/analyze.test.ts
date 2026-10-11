@@ -112,3 +112,32 @@ describe('quiet hours', () => {
     expect(localHour(Date.UTC(2026, 0, 15, 0, 30, 0), 'UTC')).toBe(0);
   });
 });
+
+describe('ban outcomes by kind', () => {
+  const rows = [
+    { ip: '1.1.1.1', country: 'DE', outcome: 'reject', host: 'nas.x', n: 2, errors: 2 },
+    { ip: '1.1.1.1', country: 'DE', outcome: 'ban-scan', host: 'nas.x', n: 1, errors: 1 },
+    { ip: '1.1.1.1', country: 'DE', outcome: 'banned', host: 'nas.x', n: 40, errors: 40 },
+    { ip: '2.2.2.2', country: 'NL', outcome: 'ban-scan', host: 'docker.x', n: 3, errors: 3 }, // banned three times from three data centres
+    { ip: '3.3.3.3', country: 'US', outcome: 'ban-scan', host: 'camp.x', n: 1, errors: 1 },
+    { ip: '4.4.4.4', country: 'FR', outcome: 'ban-origin', host: 'ha.x', n: 1, errors: 1 },
+    { ip: '5.5.5.5', country: 'RO', outcome: 'fail', host: 'nas.x', n: 2, errors: 2 },
+    { ip: '5.5.5.5', country: 'RO', outcome: 'ban', host: 'nas.x', n: 1, errors: 1 },
+  ];
+
+  it('folds scanner and app-login bans as probes and app failures, never as credential attempts', () => {
+    const a = foldAddresses(rows as never);
+    expect(a.get('1.1.1.1')).toMatchObject({ probes: 3, fails: 0, bannedNow: true, total: 43 });
+    expect(a.get('2.2.2.2')).toMatchObject({ probes: 3, fails: 0, bannedNow: true });
+    expect(a.get('4.4.4.4')).toMatchObject({ appFails: 1, fails: 0, bannedNow: true });
+    expect(a.get('5.5.5.5')).toMatchObject({ fails: 3, bannedNow: true });
+  });
+
+  it('three scanners banned in one window are not "password guessing from 3 addresses"', async () => {
+    const net = fakeNetwork({ 'analytics_engine/sql': async (req) => new Response(JSON.stringify({ data: (await req.text()).includes('GROUP BY ip, country, outcome, host') ? rows.slice(0, 6) : [] })) });
+    const env = makeEnv(new FakeKV(), new FakeAnalytics(), { CF_API_TOKEN: 't', CF_ACCOUNT_ID: 'acc' });
+    const alerts = await runAnalysis(env, net.doFetch, Date.now());
+    expect(alerts.filter((a) => a.kind === 'credentials')).toEqual([]);
+    expect(net.telegram().map((m) => (m.body as { text: string }).text).some((t) => t.includes('guessing'))).toBe(false);
+  });
+});

@@ -76,15 +76,18 @@ export function digestEvent(siteName: string, q: Queue, windowSeconds: number): 
   const groups = new Map<EventKind, Event[]>();
   for (const e of q.events) groups.set(e.kind, [...(groups.get(e.kind) ?? []), e]);
   const lines: string[] = [];
+  let counted = 0;
   const banLine = (label: string, list: Event[]) => {
     const shown = list.slice(0, 12).map((e) => `${e.ip ?? '?'}${e.cc ? ` (${e.cc})` : ''}${e.host ? ` ${e.host}` : ''}`);
     return `${label} (${list.length}): ${shown.join(', ')}${list.length > 12 ? ', …' : ''}`;
   };
   for (const [kind, list] of groups) {
-    // Ban events carry ip/cc/host → one line per kind. Analysis events carry their own
-    // bulleted lines → the kind's label once, then the lines. Anything else: title — text.
-    const bans = list.filter((e) => e.ip);
+    // Ban events carry ip/cc/host → one line per kind, each address once (a ban can be
+    // recorded twice from two data centres). Analysis events carry their own bulleted
+    // lines → the kind's label once, then the lines. Anything else: title — text.
+    const bans = list.filter((e, i) => e.ip && list.findIndex((o) => o.ip === e.ip) === i);
     const rest = list.filter((e) => !e.ip);
+    counted += bans.length + rest.length;
     if (bans.length) {
       lines.push(banLine(kind === 'scanner' ? 'Scanners banned' : kind === 'credentials' ? 'Wrong-credential bans' : kind === 'app_logins' ? 'App-login bans' : 'Banned', bans));
     }
@@ -98,7 +101,7 @@ export function digestEvent(siteName: string, q: Queue, windowSeconds: number): 
     }
   }
   if (q.dropped) lines.push(`(${q.dropped} more events not kept)`);
-  const n = q.events.length + q.dropped;
+  const n = counted + q.dropped;
   const severity: Severity = q.events.some((e) => e.severity === 'critical') ? 'critical' : q.events.some((e) => e.severity === 'warn') ? 'warn' : 'info';
   return { kind: 'traffic', severity, title: `${siteName}: ${n} event${n === 1 ? '' : 's'} in the last ${duration(windowSeconds)}`, text: lines.join('\n') };
 }

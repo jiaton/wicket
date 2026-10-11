@@ -96,7 +96,9 @@ export function matchSignature(pathname: string, userAgent: string, extra: Signa
   } catch {
     /* keep the raw path */
   }
-  for (const p of PROBE_PATHS) if (path.includes(p)) return `path ${p}`;
+  // Dot-directories (`/.git/`, `/.svn/`, …) are "file" signatures like the CRS restricted
+  // files: never legitimate on any app, whatever it answers. `/.well-known/` is not one.
+  for (const p of PROBE_PATHS) if (path.includes(p)) return `${p.startsWith('/.') && !p.startsWith('/.well-known/') ? 'file' : 'path'} ${p}`;
   for (const f of CRS_RESTRICTED_FILES) if (path.includes(`/${f}`)) return `file ${f}`;
   for (const re of extra.paths) if (re.test(pathname)) return `path ~ ${re.source}`;
   const ua = userAgent.toLowerCase();

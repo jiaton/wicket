@@ -5,6 +5,7 @@ import { isTrusted } from '../store/trust';
 import { loginPage, messagePage } from '../ui/pages';
 import type { Ctx, Result } from './context';
 import { html, json } from './respond';
+import { scannerSignature } from './signatures';
 
 /**
  * A wrong password or wrong explicit token. Two counters move: the global one (rotating-IP
@@ -16,9 +17,14 @@ export async function registerFailure(c: Ctx, kind: 'password' | 'token', next =
     if (kind === 'token') return [json({ error: 'invalid token' }, 401), 'fail'];
     return [html(loginPage({ host: c.url.hostname, action: `${ENDPOINT_PREFIX}login`, next, error: 'Wrong password.' }), 401), 'fail'];
   }
-  const global = await bumpGlobalFailures(c.env, c.deps.now(), c.cfg.failGlobalWindowSeconds);
-  if (global.n >= c.cfg.failGlobalLimit) {
-    await lockDown(c, global.n, Math.round((c.deps.now() - global.since) / 60_000));
+  // The global counter exists for one attacker rotating addresses. Scanners spray API keys at
+  // `/.env`-style paths from many addresses too; they still earn per-address strikes, but
+  // must not be able to pause password entry for everyone.
+  if (!(kind === 'token' && scannerSignature(c))) {
+    const global = await bumpGlobalFailures(c.env, c.deps.now(), c.cfg.failGlobalWindowSeconds);
+    if (global.n >= c.cfg.failGlobalLimit) {
+      await lockDown(c, global.n, Math.round((c.deps.now() - global.since) / 60_000));
+    }
   }
 
   const fails = await bumpFailures(c.env, c.ip, c.cfg.failWindowSeconds);

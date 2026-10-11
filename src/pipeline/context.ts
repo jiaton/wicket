@@ -1,7 +1,7 @@
 import type { Env } from '../config/env';
 import type { HostConfig } from '../config/hosts';
 import type { Settings } from '../config/settings';
-import type { SlidingCounter } from '../core/counters';
+import type { RecentSet, SlidingCounter } from '../core/counters';
 import type { Fetch } from '../notify';
 
 /** Injected I/O so tests run in plain Node with a fake network and a fake clock. */
@@ -22,7 +22,9 @@ export type Outcome =
   | 'origin-fail' // observe-mode passthrough whose origin answer matched a watch rule
   | 'login' // password accepted
   | 'fail' // wrong password/token (not yet banned)
-  | 'ban' // this request triggered a ban
+  | 'ban' // this request triggered a password/token ban
+  | 'ban-scan' // this request triggered a scanner ban (signature or burst)
+  | 'ban-origin' // this request triggered a ban for failed logins at the app itself
   | 'banned' // already banned
   | 'locked' // lockdown in effect
   | 'unban' // unban / lift-lockdown link used
@@ -46,6 +48,12 @@ export interface Ctx {
   scanner: SlidingCounter;
   /** Per-isolate counter of known scanner signature hits. */
   signatures: SlidingCounter;
+  /**
+   * Addresses this isolate banned in the last few minutes. KV caches a miss for up to a
+   * minute, so without this a scanner that keeps hammering would be banned again and again
+   * (each time a KV write, a list call and a notification).
+   */
+  recentBans: RecentSet;
   /** Static allow list plus resolved `allow_dns` names (cached per isolate). */
   allowed: () => Promise<boolean>;
   /** Remembers that this address holds an owner session (throttled KV write). */

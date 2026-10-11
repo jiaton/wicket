@@ -4,10 +4,13 @@ import type { Row } from '../cloudflare/analytics';
  * Per-address view of the last window, folded from Analytics Engine rows grouped by
  * (ip, country, outcome, host). What a request's `outcome` (blob5) tells us:
  *   fail / ban      wrong wicket password or token       → fails
- *   origin-fail     an app's own login failed (observe)  → appFails
+ *   origin-fail / ban-origin  an app's own login failed  → appFails
  *   reject          anonymous probe answered 401         → probes
  *   observe + 4xx   anonymous probe at an observe host   → probes
+ *   ban-scan        the probe that banned a scanner      → probes
  *   banned          already blocked                      → nothing
+ * Every `ban*` outcome also marks the address as banned in this window, so detectors
+ * leave it alone; only `ban` (a password/token ban) counts as a credential attempt.
  */
 export interface HostCounts {
   fails: number;
@@ -42,14 +45,14 @@ export function foldAddresses(rows: Row[]): Map<string, Address> {
     const errors = num(row.errors);
     const outcome = String(row.outcome);
     a.total += n;
+    if (outcome.startsWith('ban-') || outcome === 'ban') a.bannedNow = true;
     if (outcome === 'fail' || outcome === 'ban') {
       a.fails += n;
       h.fails += n;
-      if (outcome === 'ban') a.bannedNow = true;
-    } else if (outcome === 'origin-fail') {
+    } else if (outcome === 'origin-fail' || outcome === 'ban-origin') {
       a.appFails += n;
       h.appFails += n;
-    } else if (outcome === 'reject') {
+    } else if (outcome === 'reject' || outcome === 'ban-scan') {
       a.probes += n;
       h.probes += n;
     } else if (outcome === 'observe') {

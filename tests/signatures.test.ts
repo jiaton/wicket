@@ -9,7 +9,7 @@ describe('matchSignature', () => {
     expect(matchSignature('/wp-login.php', 'Mozilla/5.0', none)).toBe('path /wp-login.php');
     expect(matchSignature('/WP-Admin/setup-config.php', '', none)).toBe('path /wp-admin');
     expect(matchSignature('/.env', '', none)).toBe('file .env');
-    expect(matchSignature('/app/.git/config', '', none)).toBe('path /.git/');
+    expect(matchSignature('/app/.git/config', '', none)).toBe('file /.git/');
     expect(matchSignature('/%2Eaws/credentials', '', none)).toMatch(/^file \.aws/);
     expect(matchSignature('/', 'Mozilla/5.0 (compatible; Nikto/2.1.6)', none)).toBe('agent nikto');
     expect(matchSignature('/', 'masscan/1.3', none)).toBe('agent masscan');
@@ -38,7 +38,7 @@ describe('signature strikes', () => {
     const third = await probe('/phpmyadmin/index.php');
     expect(third.status).toBe(403);
     expect(await h.kv.get('ban:198.51.100.9')).not.toBeNull();
-    expect(h.analytics.outcomes()).toEqual(['reject', 'reject', 'ban']);
+    expect(h.analytics.outcomes()).toEqual(['reject', 'reject', 'ban-scan']);
     const tg = h.net.telegram();
     expect(tg).toHaveLength(1);
     expect((tg[0]!.body as { text: string }).text).toContain('3 requests for known scanner paths/agents in 600s (last: path /phpmyadmin) on nas.example.test');
@@ -56,12 +56,24 @@ describe('signature strikes', () => {
     expect(await h.kv.get('ban:198.51.100.9')).toBeNull();
   });
 
-  it('counts on observe hosts only when the origin rejected the request', async () => {
+  it('on observe hosts, login paths and agents count only when the origin rejected the request', async () => {
     const h = harness({ HOSTS_JSON: JSON.stringify({ 'blog.example.test': { mode: 'observe' } }) }, {});
     // The fake origin answers 200 to everything: a WordPress blog really serving /wp-login.php.
-    const probe = (path: string) => h.run(h.request(path, { ip: '198.51.100.9', host: 'blog.example.test' }));
+    const probe = (path: string, ua = 'Mozilla/5.0') => h.run(h.request(path, { ip: '198.51.100.9', host: 'blog.example.test', headers: { 'user-agent': ua } }));
     for (const p of ['/wp-login.php', '/xmlrpc.php', '/wp-admin/']) expect((await probe(p)).status).toBe(200);
+    for (let i = 0; i < 3; i++) expect((await probe('/', 'Nikto/2.1.6')).status).toBe(200);
     expect(await h.kv.get('ban:198.51.100.9')).toBeNull();
+  });
+
+  it('on observe hosts, /.env-style files count whatever the origin answered (single-page apps serve their index for anything)', async () => {
+    const h = harness({ HOSTS_JSON: JSON.stringify({ 'ha.example.test': { mode: 'observe' } }) }, {});
+    const probe = (path: string) => h.run(h.request(path, { ip: '198.51.100.9', host: 'ha.example.test' }));
+    expect((await probe('/config/.env')).status).toBe(200);
+    expect((await probe('/app/.env')).status).toBe(200);
+    expect((await probe('/.git/config')).status).toBe(200); // the banning request still gets the origin's answer
+    expect(await h.kv.get('ban:198.51.100.9')).not.toBeNull();
+    expect(h.analytics.outcomes()).toEqual(['observe', 'observe', 'ban-scan']);
+    expect((await probe('/')).status).toBe(403);
   });
 
   it('bans on observe hosts when the origin answers 4xx to scanner paths', async () => {
@@ -84,8 +96,10 @@ describe('signature strikes', () => {
     };
     expect((await probe('/.env')).status).toBe(404);
     expect((await probe('/wp-login.php')).status).toBe(404);
-    expect((await probe('/.git/config')).status).toBe(403);
+    expect((await probe('/.git/config')).status).toBe(404); // origin's answer; the ban bites from the next request
     expect(await h.kv.get('ban:198.51.100.9')).not.toBeNull();
+    expect(h.analytics.outcomes()).toEqual(['observe', 'observe', 'ban-scan']);
+    expect((await probe('/')).status).toBe(403);
   });
 
   it('is off when the limit is 0', async () => {

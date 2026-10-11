@@ -4,6 +4,8 @@ import { createHandler } from '../src/pipeline/handler';
 export class FakeKV {
   store = new Map<string, { value: string; expires?: number; metadata?: unknown }>();
   now = () => Date.now();
+  /** Every put, for tests that watch the free-tier write budget. */
+  writes: string[] = [];
   async get(key: string): Promise<string | null> {
     const hit = this.store.get(key);
     if (!hit) return null;
@@ -14,6 +16,7 @@ export class FakeKV {
     return hit.value;
   }
   async put(key: string, value: string, opts?: { expirationTtl?: number; metadata?: unknown }): Promise<void> {
+    this.writes.push(key);
     this.store.set(key, { value, expires: opts?.expirationTtl ? this.now() + opts.expirationTtl * 1000 : undefined, metadata: opts?.metadata });
   }
   async delete(key: string): Promise<void> {

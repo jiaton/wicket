@@ -3,7 +3,7 @@ import { hostConfig } from '../config/hosts';
 import { settings } from '../config/settings';
 import { apiTokens, matchToken } from '../config/tokens';
 import type { Env } from '../config/env';
-import { SlidingCounter } from '../core/counters';
+import { RecentSet, SlidingCounter } from '../core/counters';
 import { createFallbackTick } from '../cron';
 import { cookieValue, presentedToken, stripCredentials, wantsHtml } from '../core/credentials';
 import { verifySession } from '../core/crypto';
@@ -35,8 +35,9 @@ export const STEPS: Step[] = [
   // 2. Allow-listed addresses (e.g. the household's public IP) never see a password page.
   async (c) => ((await c.allowed()) ? passthrough(c, 'allow') : null),
 
-  // 3. Banned addresses get nothing, on every host and every path.
-  async (c) => ((await isBanned(c.env, c.ip)) ? [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'banned'] : null),
+  // 3. Banned addresses get nothing, on every host and every path. The isolate's own memory
+  //    of recent bans comes first: KV may still answer "not banned" for a minute.
+  async (c) => (c.recentBans.has(c.ip) || (await isBanned(c.env, c.ip)) ? [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'banned'] : null),
 
   // 4. ACME HTTP-01: certificate validators fetch this anonymously; the origin answers 404
   //    unless a challenge is pending, so this leaks nothing and keeps renewals working.
@@ -84,7 +85,7 @@ export const STEPS: Step[] = [
     if (strike) return strike;
     if (c.scanner.hit(c.ip, c.cfg.scanLimit, c.cfg.scanWindowSeconds * 1000)) {
       c.scanner.reset(c.ip);
-      if (await banAddress(c, c.ip, 'scan', c.cfg.scanLimit)) return [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'ban'];
+      if (await banAddress(c, c.ip, 'scan', c.cfg.scanLimit)) return [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'ban-scan'];
     }
     if (!wantsHtml(c.req) || c.req.method !== 'GET') return [json({ error: 'password required' }, 401), 'reject'];
     return [loginForm(c, 401), 'reject'];
@@ -95,6 +96,7 @@ export const STEPS: Step[] = [
 export function createHandler(deps: Deps) {
   const scanner = new SlidingCounter(deps.now);
   const signatures = new SlidingCounter(deps.now);
+  const recentBans = new RecentSet(deps.now);
   const allowCheck = createAllowCheck(deps);
   const refreshTrust = createTrustRefresher(deps.now);
   const fallbackTick = createFallbackTick(deps);
@@ -116,6 +118,7 @@ export function createHandler(deps: Deps) {
       exec,
       scanner,
       signatures,
+      recentBans,
       allowed: () => allowCheck(env, cfg, ip),
       trust: () => refreshTrust(env, ip, cfg.trustSeconds, exec),
     };

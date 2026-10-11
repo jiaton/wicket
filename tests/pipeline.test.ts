@@ -436,3 +436,39 @@ describe('logout', () => {
     expect(res.headers.get('set-cookie')).toContain('Max-Age=0');
   });
 });
+
+describe('ban bookkeeping', () => {
+  it('bans once: one KV write, one list call, one message, even while KV still reports a miss', async () => {
+    const h = harness({ SCAN_LIMIT: '3', CF_API_TOKEN: 't', CF_ACCOUNT_ID: 'acc', CF_LIST_ID: 'list' });
+    const probe = (path: string) => h.run(h.request(path, { ip: '198.51.100.7', headers: { accept: '*/*' } }));
+    for (let i = 0; i < 2; i++) expect((await probe(`/p${i}`)).status).toBe(401);
+    expect((await probe('/p2')).status).toBe(403);
+    expect(h.kv.writes.filter((k) => k === 'ban:198.51.100.7')).toHaveLength(1);
+
+    // Simulate KV's cached miss: the record is gone from this isolate's view, the scanner keeps going.
+    h.kv.store.delete('ban:198.51.100.7');
+    for (let i = 0; i < 6; i++) expect((await probe(`/q${i}`)).status).toBe(403);
+    expect(h.analytics.outcomes().slice(2)).toEqual(['ban-scan', 'banned', 'banned', 'banned', 'banned', 'banned', 'banned']);
+    expect(h.kv.writes.filter((k) => k === 'ban:198.51.100.7')).toHaveLength(1);
+    expect(h.net.telegram()).toHaveLength(1);
+    expect(h.net.sent.filter((s) => s.url.includes('rules/lists') && s.init?.method === 'POST')).toHaveLength(1);
+
+    // The memory expires; KV is the truth again.
+    h.advance(11 * 60_000);
+    expect((await probe('/r')).status).toBe(401);
+  });
+
+  it('API keys sprayed at scanner paths earn per-address strikes but never a lockdown', async () => {
+    const h = harness({ FAIL_GLOBAL_LIMIT: '4', FAIL_LIMIT: '3' });
+    for (const i of [1, 2, 3, 4, 5, 6]) {
+      const res = await h.run(h.request('/.env', { ip: `10.0.0.${i}`, headers: { 'x-api-key': 'test', accept: '*/*' } }));
+      expect(res.status).toBe(401);
+    }
+    expect(await h.kv.get('lockdown')).toBeNull();
+    expect(await h.kv.get('gfail')).toBeNull();
+    expect(await h.kv.get('fail:10.0.0.1')).toBe('1');
+    // The same keys at an ordinary path are the rotating-IP case and do count.
+    for (const i of [1, 2, 3, 4]) await h.run(h.request('/api/items', { ip: `10.0.1.${i}`, headers: { 'x-api-key': 'test', accept: '*/*' } }));
+    expect(await h.kv.get('lockdown')).not.toBeNull();
+  });
+});

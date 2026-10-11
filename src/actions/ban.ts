@@ -3,11 +3,13 @@ import type { Env } from '../config/env';
 import type { Settings } from '../config/settings';
 import { signUnban } from '../core/crypto';
 import { emit } from '../notify';
-import { LOCKDOWN_IP, startLockdown, writeBan, type BanKind } from '../store/bans';
+import { addPendingEdge, LOCKDOWN_IP, startLockdown, writeBan, type BanKind } from '../store/bans';
 import { isTrusted } from '../store/trust';
 import type { Ctx, Deps } from '../pipeline/context';
 
 const UNBAN_LINK_SECONDS = 7 * 86_400;
+/** How long an isolate remembers its own bans (covers KV's eventual consistency with margin). */
+export const RECENT_BAN_MS = 10 * 60_000;
 
 /** Signed, expiring one-click link that lifts a ban (`ip`) or the lockdown (`*`), served from `host`. */
 export async function unbanLinkFor(env: Env, now: number, host: string, ip: string): Promise<string> {
@@ -30,18 +32,10 @@ export interface BanInput {
   reason?: string;
 }
 
-/**
- * The single exit for every ban trigger, with or without a request: KV record, Cloudflare
- * IP list (edge block on all proxied hosts), notification with the Unban link. Scanner bans
- * are routine (`info`); bans from wrong credentials or failed app logins are `warn`.
- */
-export async function recordBan(env: Env, deps: Deps, cfg: Settings, b: BanInput): Promise<boolean> {
-  if (await isTrusted(env, b.ip)) {
-    console.warn('not banning trusted address', b.ip, b.kind);
-    return false;
-  }
-  const now = deps.now();
-  await writeBan(env, b.ip, { at: now, host: b.host, country: b.country, kind: b.kind });
+const persist = (env: Env, b: BanInput, now: number) => writeBan(env, b.ip, { at: now, host: b.host, country: b.country, kind: b.kind });
+
+/** The edge list and the notification; the KV record is already written. */
+async function announce(env: Env, deps: Deps, cfg: Settings, b: BanInput, now: number): Promise<void> {
   const reason =
     b.reason ??
     (b.kind === 'scan'
@@ -50,6 +44,8 @@ export async function recordBan(env: Env, deps: Deps, cfg: Settings, b: BanInput
         ? `${b.fails} failed logins at the app itself`
         : `${b.fails} wrong ${b.kind === 'token' ? 'API tokens' : 'passwords'}`);
   const edge = await listAdd(env, deps.fetch, b.ip, `${LIST_COMMENT_MARKER}${cfg.siteName}: ${reason} on ${b.host}`).catch(() => false);
+  // A failed list call (rate limit, outage) is retried by the five-minute job, not left for the hourly reconcile.
+  if (!edge && env.CF_LIST_ID) await addPendingEdge(env, b.ip).catch(() => undefined);
   await emit(
     env,
     deps.fetch,
@@ -65,17 +61,37 @@ export async function recordBan(env: Env, deps: Deps, cfg: Settings, b: BanInput
     },
     now,
   );
+}
+
+/**
+ * The single exit for every ban trigger, with or without a request: KV record, Cloudflare
+ * IP list (edge block on all proxied hosts), notification with the Unban link. Scanner bans
+ * are routine (`info`); bans from wrong credentials or failed app logins are `warn`.
+ */
+export async function recordBan(env: Env, deps: Deps, cfg: Settings, b: BanInput): Promise<boolean> {
+  if (await isTrusted(env, b.ip)) {
+    console.warn('not banning trusted address', b.ip, b.kind);
+    return false;
+  }
+  const now = deps.now();
+  await persist(env, b, now);
+  await announce(env, deps, cfg, b, now);
   return true;
 }
 
 /**
- * Request-path ban: the KV record lands before the response, the rest rides on waitUntil.
+ * Request-path ban: the KV record lands before the response, the rest rides on waitUntil,
+ * and the isolate remembers the address so a scanner that keeps hammering is answered from
+ * memory instead of being banned again while KV still reports a miss.
  * Returns false (and does nothing) for a trusted address.
  */
 export async function banAddress(c: Ctx, ip: string, kind: BanKind, fails: number, reason?: string): Promise<boolean> {
   if (await isTrusted(c.env, ip)) return false;
-  await writeBan(c.env, ip, { at: c.deps.now(), host: c.url.hostname, country: c.cc, kind });
-  c.exec.waitUntil(recordBan(c.env, c.deps, c.cfg, { ip, host: c.url.hostname, country: c.cc, kind, fails, ...(reason ? { reason } : {}) }));
+  const b: BanInput = { ip, host: c.url.hostname, country: c.cc, kind, fails, ...(reason ? { reason } : {}) };
+  const now = c.deps.now();
+  c.recentBans.add(ip, RECENT_BAN_MS);
+  await persist(c.env, b, now);
+  c.exec.waitUntil(announce(c.env, c.deps, c.cfg, b, now));
   return true;
 }
 

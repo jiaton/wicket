@@ -5,7 +5,7 @@ import type { Env } from '../config/env';
  *   ban:<ip>    permanent ban (JSON record)          fail:<ip>   wrong passwords/tokens (TTL window)
  *   ofail:<ip>  origin login failures (TTL window)   gfail       global failure counter (TTL window)
  *   lockdown    password entry paused (TTL)          alert:<k>   cron alert dedup (1 h)
- *   nq:<i>      queued notifications per channel
+ *   nq:<i>      queued notifications per channel     edgeq       bans whose IP-list call failed
  */
 export type BanKind = 'password' | 'token' | 'scan' | 'origin';
 
@@ -143,3 +143,25 @@ export async function readLockdown(env: Env): Promise<LockdownRecord | null> {
 export async function liftLockdown(env: Env): Promise<void> {
   await Promise.all([env.STORE.delete(LOCKDOWN_KEY), env.STORE.delete(GLOBAL_FAIL_KEY)]);
 }
+
+const EDGE_PENDING_KEY = 'edgeq';
+
+/** Remembers a banned address whose IP-list call failed, for the five-minute job to retry. */
+export async function addPendingEdge(env: Env, ip: string): Promise<void> {
+  const pending = new Set(await readPendingEdge(env));
+  pending.add(ip);
+  await env.STORE.put(EDGE_PENDING_KEY, JSON.stringify([...pending]), { expirationTtl: 86_400 });
+}
+
+export async function readPendingEdge(env: Env): Promise<string[]> {
+  const raw = await env.STORE.get(EDGE_PENDING_KEY);
+  if (!raw) return [];
+  try {
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export const clearPendingEdge = (env: Env) => env.STORE.delete(EDGE_PENDING_KEY);

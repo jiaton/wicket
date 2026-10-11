@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { reconcile } from '../src/cron/reconcile';
+import { reconcile, repairEdge } from '../src/cron/reconcile';
+import { listAddMany } from '../src/cloudflare/lists';
+import { recordBan } from '../src/actions/ban';
+import { settings } from '../src/config/settings';
 import { backfillBanMetadata, listBans } from '../src/store/bans';
 import { FakeAnalytics, FakeKV, fakeNetwork, makeEnv } from './helpers';
 
@@ -88,6 +91,19 @@ describe('reconcile', () => {
     expect(net.telegram()).toHaveLength(0);
   });
 
+  it('leaves wicket items younger than the grace period alone (KV listings lag behind writes)', async () => {
+    const kv = new FakeKV();
+    const now = 1_800_000_000_000;
+    const net = fakeNetwork(
+      listServer([
+        { id: 'young', ip: '10.0.0.5', comment: 'wicket test: 3 requests for known scanner paths', created_on: new Date(now - 2 * 60_000).toISOString() },
+        { id: 'old', ip: '10.0.0.6', comment: 'wicket test: 3 requests for known scanner paths', created_on: new Date(now - 15 * 60_000).toISOString() },
+      ] as never),
+    );
+    const env = makeEnv(kv, new FakeAnalytics(), LIST_ENV);
+    expect(await reconcile(env, net.doFetch, now)).toEqual({ added: [], removed: ['10.0.0.6'] });
+  });
+
   it('gives up without changes when the list cannot be read', async () => {
     const kv = new FakeKV();
     await ban(kv, '10.0.0.1');
@@ -95,5 +111,36 @@ describe('reconcile', () => {
     const env = makeEnv(kv, new FakeAnalytics(), LIST_ENV);
     expect(await reconcile(env, net.doFetch, 1_800_000_000_000)).toBeNull();
     expect(net.sent.filter((s) => s.init?.method === 'POST' && s.url.includes('rules/lists'))).toHaveLength(0);
+  });
+});
+
+describe('IP list writes', () => {
+  it('retries once after a 429 (one operation per list at a time)', async () => {
+    let calls = 0;
+    const net = fakeNetwork({ 'rules/lists/list/items': () => (calls++ === 0 ? new Response('{"errors":[{"code":10000}]}', { status: 429 }) : new Response('{"result":{}}')) });
+    const env = makeEnv(new FakeKV(), new FakeAnalytics(), LIST_ENV);
+    expect(await listAddMany(env, net.doFetch, [{ ip: '10.0.0.1', comment: 'wicket test: x' }], 0)).toBe(true);
+    expect(calls).toBe(2);
+    const always429 = fakeNetwork({ 'rules/lists/list/items': () => new Response('busy', { status: 429 }) });
+    expect(await listAddMany(env, always429.doFetch, [{ ip: '10.0.0.1', comment: 'wicket test: x' }], 0)).toBe(false);
+  });
+
+  it('a ban whose list call failed is remembered and added by the five-minute repair', async () => {
+    const kv = new FakeKV();
+    let fail = true;
+    const net = fakeNetwork({ 'rules/lists/list/items': () => (fail ? new Response('busy', { status: 429 }) : new Response('{"result":{}}')) });
+    const env = makeEnv(kv, new FakeAnalytics(), LIST_ENV);
+    const deps = { fetch: net.doFetch, now: () => 1_800_000_000_000 };
+    expect(await recordBan(env, deps, settings(env), { ip: '10.0.0.7', host: 'nas.example.test', country: 'US', kind: 'scan', fails: 3 })).toBe(true);
+    expect(await kv.get('edgeq')).toBe('["10.0.0.7"]');
+    expect(await repairEdge(env, net.doFetch)).toEqual([]); // still failing: kept for next time
+    expect(await kv.get('edgeq')).toBe('["10.0.0.7"]');
+    fail = false;
+    expect(await repairEdge(env, net.doFetch)).toEqual(['10.0.0.7']);
+    expect(await kv.get('edgeq')).toBeNull();
+    const posts = net.sent.filter((s) => s.url.includes('rules/lists') && s.init?.method === 'POST');
+    expect(posts.at(-1)!.body).toEqual([{ ip: '10.0.0.7', comment: 'wicket test: added after a failed list call' }]);
+    expect(await repairEdge(env, net.doFetch)).toEqual([]); // nothing pending: one KV read, no list call
+    expect(net.sent.filter((s) => s.url.includes('rules/lists') && s.init?.method === 'POST')).toHaveLength(posts.length);
   });
 });

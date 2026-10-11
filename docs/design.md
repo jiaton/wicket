@@ -46,7 +46,7 @@ All triggers end in the same place (`src/actions/ban.ts`): a permanent `ban:<ip>
 | wrong password | gated | per IP, KV | 3 in 24 h |
 | wrong API/app token | gated | per IP, KV | 3 in 24 h |
 | rotating-IP guessing | gated | global, KV → lockdown (no bans) | 10 in 10 min → 1 h pause |
-| scanner (signature) | both | requests for known scanner paths/agents per IP, isolate memory | 3 in 10 min |
+| scanner (signature) | both | requests for known scanner paths/agents per IP, isolate memory; on an observe host that answered 2xx only the `/.env`-style file class counts (single-page apps serve their index for anything) | 3 in 10 min |
 | scanner | gated | anonymous rejections per IP, isolate memory | 100 in 60 s |
 | scanner | observe | origin 404/400/405 per IP, isolate memory | 100 in 60 s |
 | scanner (slow) | both | anonymous probes per IP, Analytics Engine, network-wide, every 5 min | 30 in 5 min |
@@ -77,7 +77,7 @@ Events carry a **kind** (scanner, credentials, app_logins, lockdown, traffic, re
 
 ## Traffic analysis
 
-Every request writes one row to Analytics Engine: host, path, address, country, **outcome** (`pass`, `token`, `login`, `fail`, `ban`, `banned`, `reject`, `observe`, `origin-fail`, …), method, status, duration. The outcome is what makes the analysis precise: a `401` from a wrong wicket password (`fail`) and a `401` from a scanner probing `/wp-login.php` (`reject`) are different rows, not the same "4xx".
+Every request writes one row to Analytics Engine: host, path, address, country, **outcome** (`pass`, `token`, `login`, `fail`, `ban`, `ban-scan`, `ban-origin`, `banned`, `reject`, `observe`, `origin-fail`, …), method, status, duration. The outcome is what makes the analysis precise: a `401` from a wrong wicket password (`fail`) and a `401` from a scanner probing `/wp-login.php` (`reject`) are different rows, not the same "4xx". The request that triggers a ban says which kind of ban (`ban` = password/token, `ban-scan` = scanner, `ban-origin` = app login failures), so four scanners banned in one window are four scanners, not "password guessing from four addresses" (that misreading happened live before the split).
 
 Every five minutes (`src/cron/analyze.ts`):
 
@@ -95,7 +95,7 @@ Why a fixed window and not an incremental cursor: Analytics Engine samples and r
 
 Required once per account: the Analytics Engine switch (dashboard only), an IP list, a WAF custom rule `ip.src in $<list>` → block, and an API token with *Account Rule Lists: Edit* (+ *Account Analytics: Read* for the cron alerts).
 
-Two periodic jobs: every five minutes the traffic analysis and the notification digests; hourly the **reconcile** (`src/cron/reconcile.ts`), which adds KV bans missing from the list (an API call failed, the list was recreated) and removes list items wicket wrote whose KV ban is gone. Items written by anyone else (fail2ban, manual) are identified by their comment and never touched, so one list can have several writers.
+Two periodic jobs: every five minutes the retry of failed IP-list calls (the Lists API takes one operation per list at a time and answers 429 to a second ban landing within seconds; the address is kept in KV under `edgeq` until the list has it), the traffic analysis and the notification digests; hourly the **reconcile** (`src/cron/reconcile.ts`), which adds KV bans missing from the list (an API call failed, the list was recreated) and removes list items wicket wrote whose KV ban is gone. Items written by anyone else (fail2ban, manual) are identified by their comment and never touched, so one list can have several writers. Items younger than ten minutes are never removed: KV listings are eventually consistent, and a reconcile running a minute after a ban once removed the ban's own list entry.
 
 Both jobs are started by Cloudflare's Cron Triggers **and** by the request path: each isolate checks its own clock and, once a window has passed, takes a short KV lock and runs the job in the background. Cron Triggers have been observed to stop being delivered for a Worker while `/schedules` still lists them (this project and several community reports in 2026), and a security tool whose alerts silently stop is worse than one that spends a few KV writes. Whichever fires first takes the lock; the other skips.
 
@@ -119,5 +119,6 @@ What it does not defend against:
 - **An attacker already inside your allow-listed network**, or sharing your exact address: an address that recently held an owner session is trusted (`trust_window`), so a stranger behind the same carrier-grade NAT is not counted or banned during that window. The alternative, banning the shared address, would lock you out with them.
 - **Attacks that bypass Cloudflare**: if your origin is reachable directly (open ports, a leaked origin IP), wicket never sees the traffic. Use the Tunnel so the origin has no inbound ports.
 - **Application-layer vulnerabilities on observe-mode hosts.** Those apps are exposed by choice; wicket only adds bans and detection.
-- **Timing side channels on KV.** Bans and counters are eventually consistent, so a burst within a few seconds may get one extra attempt before the ban lands; the edge list closes that gap once the API call completes.
+- **Timing side channels on KV.** Bans and counters are eventually consistent, so a burst within a few seconds may get one extra attempt before the ban lands; the edge list closes that gap once the API call completes. KV also caches a miss for up to a minute, so each isolate remembers its own bans for ten minutes (`recentBans`) and answers from memory: a scanner that keeps hammering gets `403` instead of being banned again and again (one KV write, one list call and one message per repeat, seen live as five bans of one address in five minutes).
+- **Lockdown as a denial of service.** The global counter that pauses password entry only moves for wrong passwords and for wrong tokens at ordinary paths; API keys sprayed at `/.env`-style scanner paths earn per-address strikes only, so a scanner cannot lock everyone out.
 - **Cloudflare itself.** wicket trusts `CF-Connecting-IP` and the proxy; it is a Cloudflare-native tool by design.
