@@ -44,6 +44,8 @@ export interface Ctx {
   exec: ExecutionContext;
   /** Per-isolate scanner counter shared across requests. */
   scanner: SlidingCounter;
+  /** Per-isolate counter of known scanner signature hits. */
+  signatures: SlidingCounter;
 }
 
 export type Result = [Response, Outcome];

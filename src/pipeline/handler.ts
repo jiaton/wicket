@@ -14,6 +14,7 @@ import type { Ctx, Deps, Outcome, Result, Step } from './context';
 import { endpoints, loginForm } from './endpoints';
 import { registerFailure } from './failures';
 import { observe } from './observe';
+import { signatureStrike } from './signatures';
 import { html, json } from './respond';
 
 const ACME_PREFIX = '/.well-known/acme-challenge/';
@@ -71,9 +72,12 @@ export const STEPS: Step[] = [
     return session ? passthrough(c, 'pass') : null;
   },
 
-  // 10. Nothing presented. Hundreds of anonymous probes in a minute = scanner → ban;
-  //     otherwise the password page (or a JSON 401 for non-browsers).
+  // 10. Nothing presented. A few requests for known scanner paths/agents, or hundreds of
+  //     anonymous probes in a minute = scanner → ban; otherwise the password page (or a
+  //     JSON 401 for non-browsers).
   async (c) => {
+    const strike = await signatureStrike(c);
+    if (strike) return strike;
     if (c.scanner.hit(c.ip, c.cfg.scanLimit, c.cfg.scanWindowSeconds * 1000)) {
       c.scanner.reset(c.ip);
       await banAddress(c, c.ip, 'scan', c.cfg.scanLimit);
@@ -87,12 +91,13 @@ export const STEPS: Step[] = [
 /** Builds the fetch handler: one Ctx per request, the steps in order, one analytics row per request. */
 export function createHandler(deps: Deps) {
   const scanner = new SlidingCounter(deps.now);
+  const signatures = new SlidingCounter(deps.now);
   const fallbackTick = createFallbackTick(deps);
 
   return async function fetchHandler(req: Request, env: Env, exec: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     const started = deps.now();
-    const c: Ctx = { req, url, ip: clientIp(req), cc: country(req), env, cfg: settings(env), host: hostConfig(env, url.hostname), deps, exec, scanner };
+    const c: Ctx = { req, url, ip: clientIp(req), cc: country(req), env, cfg: settings(env), host: hostConfig(env, url.hostname), deps, exec, scanner, signatures };
 
     let result: Result = [json({ error: 'unhandled' }, 500), 'reject'];
     for (const step of STEPS) {

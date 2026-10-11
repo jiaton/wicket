@@ -31,6 +31,8 @@ describe('wicket.yaml', () => {
     expect(cfg.limits.password).toEqual({ count: 3, window: 86_400 });
     expect(cfg.limits.rotating).toEqual({ count: 10, window: 600, lockdown: 3600 });
     expect(cfg.limits.scanning).toEqual({ count: 30 });
+    expect(cfg.limits.signatures).toEqual({ count: 3, window: 600 });
+    expect(cfg.signatures).toEqual({ paths: [], agents: [] });
     expect(toVars(cfg).SCANNING_LIMIT).toBe('30');
     expect(cfg.cloudflare.cron).toBe('*/5 * * * *');
     expect(toCrons(cfg)).toEqual(['*/5 * * * *', '17 * * * *']);
@@ -81,6 +83,8 @@ describe('wicket.yaml', () => {
     expect(bad(`${minimal}\nbypass: [other.example.test/hook]`)).toThrow(/bypass/);
     expect(bad(`${minimal}\nalerts: { admin_hosts: [other.example.test] }`)).toThrow(/admin_hosts/);
     expect(bad(`${minimal}\nalerts: { quiet_hours: "late" }`)).toThrow(/quiet_hours/);
+    expect(bad(`${minimal}\nsignatures: { paths: ['(oops'] }`)).toThrow(/not a valid regular expression/);
+    expect(parseConfig(parse(`${minimal}\nlimits: { signatures: { count: 0 } }`), RECIPE_NAMES).limits.signatures.count).toBe(0);
   });
 
   it('ships an example that validates against the built-in recipes', () => {

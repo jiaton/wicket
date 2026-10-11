@@ -63,9 +63,9 @@ export async function recordBan(env: Env, deps: Deps, cfg: Settings, b: BanInput
 }
 
 /** Request-path ban: the KV record lands before the response, the rest rides on waitUntil. */
-export async function banAddress(c: Ctx, ip: string, kind: BanKind, fails: number): Promise<void> {
+export async function banAddress(c: Ctx, ip: string, kind: BanKind, fails: number, reason?: string): Promise<void> {
   await writeBan(c.env, ip, { at: c.deps.now(), host: c.url.hostname, country: c.cc, kind });
-  c.exec.waitUntil(recordBan(c.env, c.deps, c.cfg, { ip, host: c.url.hostname, country: c.cc, kind, fails }));
+  c.exec.waitUntil(recordBan(c.env, c.deps, c.cfg, { ip, host: c.url.hostname, country: c.cc, kind, fails, ...(reason ? { reason } : {}) }));
 }
 
 /** Pause password/token entry site-wide and tell the owner. */

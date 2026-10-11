@@ -45,6 +45,8 @@ export interface WicketConfig {
     scanner: Limit;
     /** Slow scanner ban from the analysis; the window is the analysis window (5 min). */
     scanning: { count: number };
+    /** Known scanner paths/agents from one address before a ban; count 0 disables. */
+    signatures: Limit;
     origin: Limit;
   };
   alerts: {
@@ -55,6 +57,8 @@ export interface WicketConfig {
     ipErrors: number;
     guessIps: number;
   };
+  /** Extra scanner signatures (regular expression sources). */
+  signatures: { paths: string[]; agents: string[] };
   cloudflare: {
     kvNamespaceId: string;
     analyticsDataset: string;
@@ -112,6 +116,16 @@ export function duration(v: unknown, name: string, fallback: number): number {
 
 const HOSTNAME = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
 
+/** Like `limit`, but `count: 0` is allowed and means off. */
+function signatureLimit(v: unknown): Limit {
+  const defaults: Limit = { count: 3, window: 600 };
+  if (v === undefined || v === null) return defaults;
+  if (!isObject(v)) fail('limits.signatures must be a mapping');
+  const r = v as Raw;
+  const count = r.count === 0 ? 0 : num(r.count, 'limits.signatures.count', defaults.count);
+  return { count, window: duration(r.window, 'limits.signatures.window', defaults.window) };
+}
+
 function limit(v: unknown, name: string, defaults: Limit): Limit {
   if (v === undefined || v === null) return defaults;
   if (!isObject(v)) fail(`limits.${name} must be a mapping`);
@@ -164,6 +178,15 @@ export function parseConfig(doc: unknown, recipes: ReadonlySet<string> | null = 
   const alerts = isObject(doc.alerts) ? doc.alerts : {};
   const cf = isObject(doc.cloudflare) ? doc.cloudflare : {};
   const notifications = notifyPolicy(doc.notifications);
+  const sigs = isObject(doc.signatures) ? doc.signatures : {};
+  const signatures = { paths: strings(sigs.paths, 'signatures.paths'), agents: strings(sigs.agents, 'signatures.agents') };
+  for (const re of [...signatures.paths, ...signatures.agents]) {
+    try {
+      new RegExp(re);
+    } catch {
+      fail(`signatures: "${re}" is not a valid regular expression`);
+    }
+  }
 
   const quiet = strOpt(alerts.quiet_hours, 'alerts.quiet_hours', '');
   if (quiet && !/^\d{1,2}-\d{1,2}$/.test(quiet)) fail('alerts.quiet_hours must look like "1-6" (local hours, inclusive)');
@@ -190,6 +213,7 @@ export function parseConfig(doc: unknown, recipes: ReadonlySet<string> | null = 
       rotating: { ...limit(rotating, 'rotating', { count: 10, window: 600 }), lockdown: duration(rotating.lockdown, 'limits.rotating.lockdown', 3600) },
       scanner: limit(limits.scanner, 'scanner', { count: 100, window: 60 }),
       scanning: { count: num(isObject(limits.scanning) ? limits.scanning.count : limits.scanning, 'limits.scanning.count', 30) },
+      signatures: signatureLimit(limits.signatures),
       origin: limit(limits.origin, 'origin', { count: 5, window: 600 }),
     },
     alerts: {
@@ -207,6 +231,7 @@ export function parseConfig(doc: unknown, recipes: ReadonlySet<string> | null = 
       reconcileCron: str(cf.reconcile_cron, 'cloudflare.reconcile_cron', DEFAULT_RECONCILE_CRON),
     },
     notifications,
+    signatures,
   };
 }
 
@@ -268,6 +293,10 @@ export function toVars(cfg: WicketConfig): Record<string, string> {
     SCAN_LIMIT: String(cfg.limits.scanner.count),
     SCAN_WINDOW_SECONDS: String(cfg.limits.scanner.window),
     SCANNING_LIMIT: String(cfg.limits.scanning.count),
+    SIGNATURE_LIMIT: String(cfg.limits.signatures.count),
+    SIGNATURE_WINDOW_SECONDS: String(cfg.limits.signatures.window),
+    SIGNATURE_PATHS: cfg.signatures.paths.join('\n'),
+    SIGNATURE_AGENTS: cfg.signatures.agents.join('\n'),
     ORIGIN_FAIL_LIMIT: String(cfg.limits.origin.count),
     ORIGIN_FAIL_WINDOW_SECONDS: String(cfg.limits.origin.window),
     HOSTS_JSON: JSON.stringify(hostsJson),

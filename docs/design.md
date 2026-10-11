@@ -35,7 +35,7 @@ The Worker is an ordered list of steps (`src/pipeline/handler.ts`); the first on
 7. `OPTIONS` preflights pass (browsers send them without cookies)
 8. API tokens: registered → pass; wrong explicit token → strike; foreign bearer → ignored
 9. session cookie → pass
-10. nothing presented: probe burst → scanner ban, else the password page (JSON 401 for non-browsers)
+10. nothing presented: known scanner path/agent (third hit) or probe burst → scanner ban, else the password page (JSON 401 for non-browsers)
 
 ## Ban triggers
 
@@ -46,6 +46,7 @@ All triggers end in the same place (`src/actions/ban.ts`): a permanent `ban:<ip>
 | wrong password | gated | per IP, KV | 3 in 24 h |
 | wrong API/app token | gated | per IP, KV | 3 in 24 h |
 | rotating-IP guessing | gated | global, KV → lockdown (no bans) | 10 in 10 min → 1 h pause |
+| scanner (signature) | both | requests for known scanner paths/agents per IP, isolate memory | 3 in 10 min |
 | scanner | gated | anonymous rejections per IP, isolate memory | 100 in 60 s |
 | scanner | observe | origin 404/400/405 per IP, isolate memory | 100 in 60 s |
 | scanner (slow) | both | anonymous probes per IP, Analytics Engine, network-wide, every 5 min | 30 in 5 min |

@@ -13,6 +13,7 @@ src/pipeline/         request handling as an ordered list of steps (handler.ts: 
   context.ts          Ctx (everything a step may need), Deps (injected fetch + clock), Outcome, Step
   endpoints.ts        /__wicket/login|logout|unban|settings (settings = owner-only page: status, policy, recent bans with unban/lift)
   observe.ts          observe mode: passthrough + watch rules + scanner
+  signatures.ts       known scanner path/agent → per-isolate counter → ban (used by step 10 and observe)
   failures.ts         wrong password/token → counters → ban or 401
   respond.ts          html()/json() helpers
 src/actions/ban.ts    the one exit for every ban trigger: KV + IP list + notification; lockdown
@@ -25,7 +26,7 @@ src/cron/             index.ts (jobs, run-once locks, request-path fallback tick
 src/cloudflare/       REST clients: lists.ts (IP list), analytics.ts (SQL)
 src/config/           parsing only: env.ts (field names), settings.ts (vars), hosts.ts (HOSTS_JSON), tokens.ts (API_TOKENS), channels.ts (NOTIFY_JSON), notifications.ts (policy kinds/deliveries)
 src/core/             pure functions, no I/O: crypto.ts, credentials.ts (carriers, cookie, CSRF), ip.ts, counters.ts
-src/recipes/          data: per-app watch rules
+src/recipes/          data: per-app watch rules (index.ts), scanner signatures (signatures.ts + signatures.generated.ts from OWASP CRS via `npm run signatures:update`)
 src/ui/               pages.ts (login, messages, shell), settings.ts (owner settings page)
 tests/                vitest in plain Node; helpers.ts fakes KV, Analytics and the network
 ```

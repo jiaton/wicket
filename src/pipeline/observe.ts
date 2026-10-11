@@ -4,6 +4,7 @@ import { stripCredentials } from '../core/credentials';
 import { recipeRules } from '../recipes';
 import { bumpOriginFailures, clearOriginFailures } from '../store/bans';
 import type { Ctx, Result } from './context';
+import { signatureStrike } from './signatures';
 
 /** Origin answers that, in bursts from one address, mean "scanner" on an observe host. */
 const SCAN_STATUSES = new Set([400, 404, 405]);
@@ -27,6 +28,11 @@ export async function observe(c: Ctx): Promise<Result> {
     return [res, 'origin-fail'];
   }
 
+  // Known scanner paths/agents that the app itself rejected: a few of them are a ban.
+  if (res.status >= 400) {
+    const strike = await signatureStrike(c);
+    if (strike) return strike;
+  }
   if (SCAN_STATUSES.has(res.status) && c.scanner.hit(c.ip, c.cfg.scanLimit, c.cfg.scanWindowSeconds * 1000)) {
     c.scanner.reset(c.ip);
     c.exec.waitUntil(banAddress(c, c.ip, 'scan', c.cfg.scanLimit));

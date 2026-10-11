@@ -49,6 +49,7 @@ limits:
   rotating: { count: 10, window: 10m, lockdown: 1h }    # failures from any address → pause logins
   scanner: { count: 100, window: 60s }                  # anonymous probes per address
   scanning: { count: 30 }                               # slow scanner: probes per address in the 5-min analysis, network-wide
+  signatures: { count: 3, window: 10m }                 # requests for known scanner paths/agents (OWASP CRS lists + common probes); 0 = off
   origin: { count: 5, window: 10m }                     # observe: matched failed logins per address
 
 # Cron alerts from the traffic analytics (need CF_API_TOKEN with Account Analytics: Read).
@@ -59,6 +60,13 @@ alerts:
   ip_requests: 300           # one address, requests in 5 min
   ip_errors: 30              # one address, 4xx/5xx in 5 min
   guess_ips: 3               # distinct addresses failing in 5 min
+
+# Extra scanner signatures on top of the built-in lists (regular expressions, case-insensitive).
+signatures:
+  paths: []
+#    - ^/old-admin/
+  agents: []
+#    - ^curl/
 
 # How each kind of event reaches your channels: immediate (one message each), digest (one
 # message per digest_every, collecting everything in between) or off. The owner can change

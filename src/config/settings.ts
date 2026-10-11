@@ -16,6 +16,9 @@ export interface Settings {
   scanWindowSeconds: number;
   /** Slow scanner ban from the five-minute analysis (network-wide count). */
   scanningLimit: number;
+  /** Known scanner paths/agents from one address before a ban (0 = off). */
+  signatureLimit: number;
+  signatureWindowSeconds: number;
   /** Observe mode: matched origin login failures from one address before a ban. */
   originFailLimit: number;
   originFailWindowSeconds: number;
@@ -48,6 +51,8 @@ export function settings(env: Env): Settings {
     scanLimit: int(env.SCAN_LIMIT, 100),
     scanWindowSeconds: int(env.SCAN_WINDOW_SECONDS, 60),
     scanningLimit: int(env.SCANNING_LIMIT, 30),
+    signatureLimit: env.SIGNATURE_LIMIT === '0' ? 0 : int(env.SIGNATURE_LIMIT, 3),
+    signatureWindowSeconds: int(env.SIGNATURE_WINDOW_SECONDS, 600),
     originFailLimit: int(env.ORIGIN_FAIL_LIMIT, 5),
     originFailWindowSeconds: int(env.ORIGIN_FAIL_WINDOW_SECONDS, 600),
     cookieSeconds: int(env.COOKIE_DAYS, 365) * 86_400,

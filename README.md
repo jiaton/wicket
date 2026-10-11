@@ -7,7 +7,7 @@ wicket is a single Cloudflare Worker that stands in front of the hostnames you e
 - **One shared password.** Type it once per browser; a signed cookie scoped to your domain then opens every gated host for a year. An optional second password for friends can be rotated without logging you out.
 - **API tokens** for callers that cannot type: webhooks, MCP servers, native apps. Tokens can be limited to certain hosts. Apps that already send their own `Authorization: Bearer`, `X-API-Key`, `x-access-token` or `?token=` keep working: register the value and wicket lets it through untouched.
 - **Three strikes, permanent ban.** Wrong passwords and tokens are counted per address. The third one writes a ban, appends the address to a Cloudflare IP list so a WAF rule blocks it at the edge on every proxied host, and sends you a message with a one-click **Unban** link.
-- **Scanner auto-ban, fast and slow.** A hundred anonymous probes in a minute from one address is a vulnerability scanner and gets the same ban on the spot (counted in memory at the edge). Slower scanners that never burst are caught by the five-minute analysis: thirty probes across the whole network in the window, and they are banned too. Both thresholds are yours to set.
+- **Scanner auto-ban, three ways.** Three requests for things only scanners ask for (`/.env`, `/wp-login.php`, `/.git/config`, the OWASP Core Rule Set's restricted-files and scanner-User-Agent lists, plus your own patterns) ban the address on the spot. So do a hundred anonymous probes in a minute (counted in memory at the edge). Slower scanners that never burst and never touch a known path are caught by the five-minute analysis: thirty probes across the whole network in the window. All three thresholds are yours to set.
 - **Rotating-IP brute force.** When failures from changing addresses pile up, wicket pauses password entry for an hour (existing sessions, tokens and allow-listed addresses keep working) and tells you.
 - **Observe mode** for apps with their own login (Home Assistant's companion app, Immich's mobile app, a public site). No password page; wicket still enforces bans, catches scanners and **counts the app's own failed logins** using built-in recipes, then bans the address like a brute-forcer. This is fail2ban's `filter.d` moved to the edge.
 - **Notifications you can tune.** Telegram, ntfy, Discord, Slack, a generic webhook or an Apprise endpoint. Every kind of event (scanner ban, wrong-password ban, lockdown, traffic alert, …) is delivered immediately, folded into an hourly digest, or dropped; scanner bans default to the digest because the internet scans all day. Change it in the config or on the owner-only settings page, no redeploy.
@@ -106,6 +106,7 @@ limits:
   rotating: { count: 10, window: 10m, lockdown: 1h }   # failures from any address → pause logins
   scanner:  { count: 100, window: 60s }                # burst: anonymous probes per address, counted at the edge
   scanning: { count: 30 }                              # slow: probes per address in the 5-min analysis, network-wide
+  signatures: { count: 3, window: 10m }                # known scanner paths / User-Agents per address; 0 = off
   origin:   { count: 5, window: 10m }                  # observe: matched failed logins per address
 
 alerts:
@@ -115,6 +116,10 @@ alerts:
   ip_requests: 300                 # one address in 5 min
   ip_errors: 30                    # anonymous probes from one address in 5 min → scanning line
   guess_ips: 3                     # distinct failing addresses in 5 min
+
+signatures:                        # extra scanner patterns (regex, case-insensitive) on top of the built-in lists
+  paths: []
+  agents: []
 
 notifications:                     # immediate | digest | off per kind; see Notifications
   scanner: digest
@@ -186,7 +191,11 @@ Counting every 401 would ban users of apps that answer 401 to anonymous page loa
 
 **Not detectable by status**, because the failure is a 200 page or a redirect: Home Assistant's and Nextcloud's web login, Gitea/Forgejo, Miniflux, BookStack, Wallabag, Sonarr/Radarr and friends, Stirling-PDF, code-server, Paperless's and Seafile's web forms, WordPress, Homarr, Authentik, and anything that logs in over a WebSocket (Uptime Kuma 1.x, Dockge, Zigbee2MQTT). Use the app's own lockout there. Komga and Transmission authenticate with HTTP Basic on paths their UIs also call anonymously, so a rule would ban visitors.
 
-Add your own with `watch`. Observe hosts also ban bursts of origin 400/404/405 (scanners).
+Add your own with `watch`. Observe hosts also ban scanner signatures the origin rejected (a WordPress blog in observe mode serving `/wp-login.php` with a 200 is not counted) and bursts of origin 400/404/405.
+
+### Scanner signatures
+
+The built-in list is `PROBE_PATHS` in `src/recipes/signatures.ts` (login pages, admin panels and exploit endpoints every bot tries) plus two files from the [OWASP Core Rule Set](https://github.com/coreruleset/coreruleset) (Apache-2.0): `restricted-files.data` (dotfiles, credentials, configs) and `scanners-user-agents.data`. `npm run signatures:update` refreshes the generated file from upstream. Matching is a case-insensitive substring check on the decoded path and the User-Agent, only for requests that were rejected anyway, so it costs nothing on the happy path and cannot touch a logged-in user.
 
 ## Notifications
 

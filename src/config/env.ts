@@ -20,6 +20,12 @@ export interface Env {
   SCAN_LIMIT?: string;
   /** Slow scanner ban: anonymous probes per address in the five-minute analysis window (network-wide). */
   SCANNING_LIMIT?: string;
+  /** Scanner signature hits (known paths / User-Agents) per address before a ban; 0 disables. */
+  SIGNATURE_LIMIT?: string;
+  SIGNATURE_WINDOW_SECONDS?: string;
+  /** Extra signature patterns from wicket.yaml, newline-separated regular expressions. */
+  SIGNATURE_PATHS?: string;
+  SIGNATURE_AGENTS?: string;
   SCAN_WINDOW_SECONDS?: string;
   ORIGIN_FAIL_LIMIT?: string;
   ORIGIN_FAIL_WINDOW_SECONDS?: string;
