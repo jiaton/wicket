@@ -1,5 +1,5 @@
 import { banAddress } from '../actions/ban';
-import { hostConfig } from '../config/hosts';
+import { carriesAppCredential, hostConfig } from '../config/hosts';
 import { settings } from '../config/settings';
 import { apiTokens, matchToken } from '../config/tokens';
 import type { Env } from '../config/env';
@@ -13,7 +13,7 @@ import { messagePage } from '../ui/pages';
 import type { Ctx, Deps, Outcome, Result, Step } from './context';
 import { endpoints, loginForm } from './endpoints';
 import { registerFailure } from './failures';
-import { observe } from './observe';
+import { observe, passthrough as appPassthrough } from './observe';
 import { signatureStrike } from './signatures';
 import { createAllowCheck } from './allow';
 import { createTrustRefresher } from '../store/trust';
@@ -52,18 +52,25 @@ export const STEPS: Step[] = [
   // 7. CORS preflights carry no credentials by design; the origin's CORS policy answers them.
   async (c) => (c.req.method === 'OPTIONS' ? passthrough(c, 'preflight') : null),
 
-  // 8. API tokens. A registered token passes (and stays in the request for the origin);
-  //    a wrong explicit token is a strike; a foreign bearer is ignored, not punished.
+  // 8. Registered API tokens pass (and stay in the request for the origin).
   async (c) => {
     const presented = presentedToken(c.req, c.url);
-    if (!presented) return null;
-    if (matchToken(presented.value, c.url.hostname, apiTokens(c.env))) return passthrough(c, 'token');
-    if (!presented.explicit) return null;
+    return presented && matchToken(presented.value, c.url.hostname, apiTokens(c.env)) ? passthrough(c, 'token') : null;
+  },
+
+  // 9. The app's own credential (hosts.<name>.passthrough): the request goes to the app, which
+  //    decides; its 401 counts as a failed login for the address. wicket stores no app tokens.
+  async (c) => (c.host.passthrough && carriesAppCredential(c.host.passthrough, c.req, c.url) ? appPassthrough(c) : null),
+
+  // 10. A wrong explicit token is a strike; a foreign bearer is ignored, not punished.
+  async (c) => {
+    const presented = presentedToken(c.req, c.url);
+    if (!presented?.explicit) return null;
     if (await isLockedDown(c.env)) return [json({ error: 'locked' }, 403), 'locked'];
     return registerFailure(c, 'token');
   },
 
-  // 9. The session cookie.
+  // 11. The session cookie.
   async (c) => {
     const session = await verifySession(
       cookieValue(c.req),
@@ -77,7 +84,7 @@ export const STEPS: Step[] = [
     return passthrough(c, 'pass');
   },
 
-  // 10. Nothing presented. A few requests for known scanner paths/agents, or hundreds of
+  // 12. Nothing presented. A few requests for known scanner paths/agents, or hundreds of
   //     anonymous probes in a minute = scanner → ban; otherwise the password page (or a
   //     JSON 401 for non-browsers).
   async (c) => {

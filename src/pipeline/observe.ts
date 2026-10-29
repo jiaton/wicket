@@ -1,23 +1,26 @@
 import { banAddress } from '../actions/ban';
-import { watchMatches } from '../config/hosts';
+import { watchMatches, type WatchRule } from '../config/hosts';
 import { stripCredentials } from '../core/credentials';
 import { recipeRules } from '../recipes';
 import { bumpOriginFailures, clearOriginFailures } from '../store/bans';
-import type { Ctx, Result } from './context';
+import type { Ctx, Outcome, Result } from './context';
 import { signatureStrike } from './signatures';
 
-/** Origin answers that, in bursts from one address, mean "scanner" on an observe host. */
+/** Origin answers that, in bursts from one address, mean "scanner" on a forwarded host. */
 const SCAN_STATUSES = new Set([400, 404, 405]);
 
+/** For pass-through requests: the app said the credential was bad. Any path, any method. */
+const APP_REJECTED: WatchRule[] = [{ path: '/', status: [401] }];
+
 /**
- * Observe mode: pass the request through, then look at what the origin answered.
- * A watch-rule match (e.g. POST /api/auth/login → 401) counts as a login failure for
- * this address; known scanner paths and 4xx probe bursts count as scanning. The current
- * response is always returned as-is; the ban bites from the next request on.
+ * Forward the request to the origin, then look at what it answered. A watch-rule match
+ * (e.g. POST /api/auth/login → 401) counts as a login failure for this address; known
+ * scanner paths and 4xx probe bursts count as scanning. The current response is always
+ * returned as-is; the ban bites from the next request on. Shared by observe mode (every
+ * request) and by pass-through (requests carrying the app's own credential on a gated host).
  */
-export async function observe(c: Ctx): Promise<Result> {
+export async function forwardAndWatch(c: Ctx, rules: WatchRule[], ok: Outcome): Promise<Result> {
   const res = await c.deps.fetch(stripCredentials(c.req));
-  const rules = [...recipeRules(c.host.recipe), ...c.host.watch];
 
   if (watchMatches(rules, c.req.method, c.url.pathname, res.status)) {
     const fails = await bumpOriginFailures(c.env, c.ip, c.cfg.originFailWindowSeconds);
@@ -38,5 +41,14 @@ export async function observe(c: Ctx): Promise<Result> {
     c.scanner.reset(c.ip);
     if (await banAddress(c, c.ip, 'scan', c.cfg.scanLimit)) return [res, 'ban-scan'];
   }
-  return [res, 'observe'];
+  return [res, ok];
 }
+
+/** Observe mode: the app keeps its own login; wicket only watches and bans. */
+export const observe = (c: Ctx): Promise<Result> => forwardAndWatch(c, [...recipeRules(c.host.recipe), ...c.host.watch], 'observe');
+
+/**
+ * Pass-through on a gated host: the request carries the app's own credential (see
+ * `hosts.<name>.passthrough`), so the app decides; a 401 from it is a failed login.
+ */
+export const passthrough = (c: Ctx): Promise<Result> => forwardAndWatch(c, APP_REJECTED, 'app');

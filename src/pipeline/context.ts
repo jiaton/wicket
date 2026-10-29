@@ -19,6 +19,7 @@ export type Outcome =
   | 'bypass' // ACME challenge or BYPASS_PREFIXES → origin
   | 'preflight' // CORS OPTIONS → origin
   | 'observe' // observe-mode passthrough
+  | 'app' // gated host, request carried the app's own credential → origin (pass-through rule)
   | 'origin-fail' // observe-mode passthrough whose origin answer matched a watch rule
   | 'login' // password accepted
   | 'fail' // wrong password/token (not yet banned)

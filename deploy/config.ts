@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse } from 'yaml';
 
-import type { WatchRule } from '../src/config/hosts';
+import { PASSTHROUGH_PRESETS, type Passthrough, type WatchRule } from '../src/config/hosts.ts';
 import { DEFAULT_POLICY, isDelivery, isPolicyKind, type NotifyPolicy } from '../src/config/notifications.ts';
 
 export const DEFAULT_FILE = 'wicket.yaml';
@@ -22,6 +22,8 @@ export interface HostEntry {
   mode: 'gated' | 'observe';
   recipe?: string;
   watch?: WatchRule[];
+  /** Gated hosts: carriers of the app's own credential that skip the password page. */
+  passthrough?: Passthrough;
 }
 
 export interface Limit {
@@ -162,8 +164,32 @@ function hostEntry(v: unknown, host: string, zone: string, recipes: ReadonlySet<
   const recipe = r.recipe === undefined ? undefined : str(r.recipe, `hosts.${host}.recipe`);
   if (recipe && recipes && !recipes.has(recipe)) fail(`hosts.${host}.recipe: unknown recipe "${recipe}" (known: ${[...recipes].join(', ')})`);
   if (mode === 'gated' && (recipe || r.watch !== undefined)) fail(`hosts.${host}: recipe/watch only apply to mode: observe`);
+  if (mode === 'observe' && r.passthrough !== undefined) fail(`hosts.${host}: passthrough only applies to mode: gated (observe hosts already forward everything)`);
   const watch = watchRules(r.watch, host);
-  return { mode, ...(recipe ? { recipe } : {}), ...(watch?.length ? { watch } : {}) };
+  const passthrough = passthroughRule(r.passthrough, host);
+  return { mode, ...(recipe ? { recipe } : {}), ...(watch?.length ? { watch } : {}), ...(passthrough ? { passthrough } : {}) };
+}
+
+/** `passthrough: api` (a preset) or a mapping of headers / cookies / params / paths. */
+function passthroughRule(v: unknown, host: string): Passthrough | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v === 'string') {
+    const preset = PASSTHROUGH_PRESETS[v];
+    if (!preset) fail(`hosts.${host}.passthrough: unknown preset "${v}" (known: ${Object.keys(PASSTHROUGH_PRESETS).join(', ')}), or give a mapping`);
+    return preset;
+  }
+  if (!isObject(v)) fail(`hosts.${host}.passthrough must be a preset name or a mapping`);
+  const r = v as Raw;
+  const p: Passthrough = {
+    headers: r.headers === undefined ? [] : strings(r.headers, `hosts.${host}.passthrough.headers`).map((h) => h.toLowerCase()),
+    cookies: r.cookies === undefined ? [] : strings(r.cookies, `hosts.${host}.passthrough.cookies`),
+    params: r.params === undefined ? [] : strings(r.params, `hosts.${host}.passthrough.params`),
+    paths: r.paths === undefined ? [] : strings(r.paths, `hosts.${host}.passthrough.paths`),
+  };
+  for (const h of p.headers) if (h === 'cookie' || h === 'host') fail(`hosts.${host}.passthrough.headers: "${h}" cannot be a credential carrier`);
+  for (const path of p.paths) if (!path.startsWith('/')) fail(`hosts.${host}.passthrough.paths: "${path}" must start with /`);
+  if (!p.headers.length && !p.cookies.length && !p.params.length) fail(`hosts.${host}.passthrough needs at least one of headers, cookies, params`);
+  return p;
 }
 
 /** Validates the parsed YAML document. `recipes` = known recipe names, or null to skip that check. */
@@ -319,6 +345,7 @@ export function toVars(cfg: WicketConfig): Record<string, string> {
   const hostsJson: Record<string, unknown> = {};
   for (const [host, h] of Object.entries(cfg.hosts)) {
     if (h.mode === 'observe') hostsJson[host] = { mode: 'observe', ...(h.recipe ? { recipe: h.recipe } : {}), ...(h.watch ? { watch: h.watch } : {}) };
+    else if (h.passthrough) hostsJson[host] = { mode: 'gated', passthrough: h.passthrough };
   }
   return {
     ALLOW_IPS: cfg.allowIps.join(','),

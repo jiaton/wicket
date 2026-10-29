@@ -5,6 +5,7 @@
 A single Cloudflare Worker in front of the hostnames you expose through a Tunnel. Type one password per browser and every gated host opens for a year. Wrong passwords, API-key guessing and scanners get the address banned at the edge, and you get a message with an Unban button. No Cloudflare Access, no fail2ban, no server.
 
 - **One shared password**, an optional second one for friends, and host-scoped API tokens for webhooks and apps.
+- **Apps keep their own auth**: a one-line `passthrough` rule lets requests with the app's bearer, API key or session cookie reach the app; wicket stores no app tokens and bans the address after five rejections.
 - **Three strikes, permanent ban**: wrong passwords and tokens per address → KV ban + Cloudflare IP list (WAF blocks it on every proxied host).
 - **Scanner auto-ban**: known scanner paths and User-Agents (OWASP CRS lists), probe bursts, and slow network-wide scanning.
 - **Rotating-IP guessing** pauses password entry for an hour and tells you.

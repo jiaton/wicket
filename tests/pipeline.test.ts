@@ -472,3 +472,67 @@ describe('ban bookkeeping', () => {
     expect(await h.kv.get('lockdown')).not.toBeNull();
   });
 });
+
+describe('pass-through of the app\'s own credential', () => {
+  const HOSTS = JSON.stringify({ 'api.example.test': { mode: 'gated', passthrough: 'api' }, 'app.example.test': { mode: 'gated', passthrough: { cookies: ['sid'], paths: ['/api/'] } } });
+
+  it('forwards requests that carry a credential the app validates, stores nothing, and still asks browsers for the password', async () => {
+    const h = harness({ HOSTS_JSON: HOSTS });
+    const bearer = await h.run(h.request('/v1/items', { host: 'api.example.test', headers: { authorization: 'Bearer app-issued', accept: 'application/json' } }));
+    expect(bearer.status).toBe(200);
+    expect(await bearer.text()).toBe('origin:/v1/items');
+    expect(h.net.origin.at(-1)!.headers.get('authorization')).toBe('Bearer app-issued'); // untouched
+    const key = await h.run(h.request('/mcp', { host: 'api.example.test', method: 'POST', headers: { 'x-api-key': 'whatever', accept: '*/*' }, body: '{}' }));
+    expect(key.status).toBe(200);
+    const param = await h.run(h.request('/ws?token=abc', { host: 'api.example.test', headers: { accept: '*/*' } }));
+    expect(param.status).toBe(200);
+    expect((await h.run(h.request('/', { host: 'api.example.test' }))).status).toBe(401); // no credential → password page
+    expect(h.analytics.outcomes()).toEqual(['app', 'app', 'app', 'reject']);
+    expect([...h.kv.store.keys()].filter((k) => !k.startsWith('job:'))).toEqual([]); // nothing recorded
+  });
+
+  it('counts the app\'s 401 as failed logins and bans at limits.origin; a 200 clears nothing it did not count', async () => {
+    const h = harness({ HOSTS_JSON: HOSTS, ORIGIN_FAIL_LIMIT: '3' }, { 'api.example.test': () => new Response('bad token', { status: 401 }) });
+    // The fake network treats unknown hosts as origins; route this host to a 401 answer instead.
+    const net = h.net;
+    const original = net.doFetch;
+    const { createHandler } = await import('../src/pipeline/handler');
+    const gate = createHandler({
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const req = input instanceof Request ? input : new Request(String(input), init);
+        if (new URL(req.url).hostname === 'api.example.test') return new Response('bad token', { status: 401 });
+        return original(input, init);
+      },
+      now: () => h.time(),
+    });
+    const { ctx } = await import('./helpers');
+    const call = async () => {
+      const c = ctx();
+      const res = await gate(h.request('/v1/items', { ip: '198.51.100.3', host: 'api.example.test', headers: { authorization: 'Bearer stale', accept: 'application/json' } }), h.env, c);
+      await c.settle();
+      return res;
+    };
+    expect((await call()).status).toBe(401);
+    expect((await call()).status).toBe(401);
+    expect(await h.kv.get('ofail:198.51.100.3')).toBe('2');
+    expect((await call()).status).toBe(401); // the app's answer, and the ban is written
+    expect(await h.kv.get('ban:198.51.100.3')).toContain('"kind":"origin"');
+    expect(h.analytics.outcomes()).toEqual(['origin-fail', 'origin-fail', 'ban-origin']);
+    expect((await call()).status).toBe(403);
+    expect(net.telegram()).toHaveLength(1);
+  });
+
+  it('cookie carriers and path prefixes; registered wicket tokens still win; wrong explicit tokens elsewhere still strike', async () => {
+    const h = harness({ HOSTS_JSON: HOSTS, API_TOKENS: 'bot:bot-token@api.example.test' });
+    expect((await h.run(h.request('/api/me', { host: 'app.example.test', headers: { cookie: 'sid=abc; theme=dark' } }))).status).toBe(200);
+    expect((await h.run(h.request('/settings', { host: 'app.example.test', headers: { cookie: 'sid=abc' } }))).status).toBe(401); // outside /api/
+    expect((await h.run(h.request('/api/me', { host: 'app.example.test', headers: { cookie: 'theme=dark' } }))).status).toBe(401); // no credential cookie
+    expect(h.analytics.outcomes()).toEqual(['app', 'reject', 'reject']);
+    const registered = await h.run(h.request('/x', { host: 'api.example.test', headers: { 'x-wicket-token': 'bot-token', accept: '*/*' } }));
+    expect(registered.status).toBe(200);
+    expect(h.analytics.outcomes().at(-1)).toBe('token');
+    // On a host without pass-through the same header is still a wicket strike.
+    expect((await h.run(h.request('/x', { ip: '198.51.100.4', headers: { 'x-api-key': 'nope', accept: '*/*' } }))).status).toBe(401);
+    expect(await h.kv.get('fail:198.51.100.4')).toBe('1');
+  });
+});

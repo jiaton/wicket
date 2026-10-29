@@ -114,3 +114,22 @@ describe('wicket.yaml', () => {
     }
   });
 });
+
+describe('passthrough', () => {
+  it('accepts the api preset or a mapping on gated hosts and compiles it into HOSTS_JSON', () => {
+    const cfg = parseConfig(parse(`${minimal}\n  api.example.test: { passthrough: api }\n  app.example.test:\n    passthrough: { headers: [Authorization, X-Session], cookies: [sid], paths: [/api/] }`), RECIPE_NAMES);
+    expect(cfg.hosts['api.example.test']!.passthrough).toEqual({ headers: ['authorization', 'x-api-key', 'x-access-token'], cookies: [], params: ['token'], paths: [] });
+    expect(cfg.hosts['app.example.test']!.passthrough).toEqual({ headers: ['authorization', 'x-session'], cookies: ['sid'], params: [], paths: ['/api/'] });
+    const env = makeEnv(new FakeKV(), new FakeAnalytics(), toVars(cfg));
+    expect(hostConfig(env, 'app.example.test')).toMatchObject({ mode: 'gated', passthrough: { cookies: ['sid'], paths: ['/api/'] } });
+    expect(hostConfig(env, 'nas.example.test').passthrough).toBeUndefined();
+  });
+
+  it('rejects unknown presets, empty rules, bad paths, forbidden headers and observe hosts', () => {
+    expect(bad(`${minimal}\n  a.example.test: { passthrough: nope }`)).toThrow(/unknown preset/);
+    expect(bad(`${minimal}\n  a.example.test: { passthrough: { paths: [/api/] } }`)).toThrow(/at least one/);
+    expect(bad(`${minimal}\n  a.example.test: { passthrough: { headers: [x], paths: [api] } }`)).toThrow(/must start with/);
+    expect(bad(`${minimal}\n  a.example.test: { passthrough: { headers: [Cookie] } }`)).toThrow(/cannot be a credential carrier/);
+    expect(bad(`${minimal}\n  a.example.test: { mode: observe, passthrough: api }`)).toThrow(/only applies to mode: gated/);
+  });
+});

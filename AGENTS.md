@@ -12,7 +12,7 @@ src/index.ts          Worker entry: fetch = pipeline, scheduled = the five-minut
 src/pipeline/         request handling as an ordered list of steps (handler.ts: STEPS)
   context.ts          Ctx (everything a step may need), Deps (injected fetch + clock), Outcome, Step
   endpoints.ts        /__wicket/login|logout|unban|settings (settings = owner-only page: status, policy, recent bans with unban/lift)
-  observe.ts          observe mode: passthrough + watch rules + scanner
+  observe.ts          forwardAndWatch (origin answer → watch rules, signatures, bursts); used by observe mode and by the pass-through step (app's own credential on a gated host)
   signatures.ts       known scanner path/agent → per-isolate counter → ban (used by step 10 and observe; scope `files` for 2xx answers on observe hosts)
   allow.ts            allow list = allow_ips + allow_dns (DoH, cached 5 min per isolate); also used by the slow-scanner job
   failures.ts         wrong password/token → counters → ban or 401

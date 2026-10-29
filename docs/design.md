@@ -33,9 +33,11 @@ The Worker is an ordered list of steps (`src/pipeline/handler.ts`); the first on
 5. observe-mode hosts: forward, watch, count
 6. configured bypass prefixes pass
 7. `OPTIONS` preflights pass (browsers send them without cookies)
-8. API tokens: registered → pass; wrong explicit token → strike; foreign bearer → ignored
-9. session cookie → pass
-10. nothing presented: known scanner path/agent (third hit) or probe burst → scanner ban, else the password page (JSON 401 for non-browsers)
+8. registered API tokens → pass (the header stays in the request for the origin)
+9. the app's own credential on a gated host with a `passthrough` rule (header, cookie or query parameter the app validates itself; optional path prefixes) → forwarded like observe mode: the app decides, its 401 counts as a failed login for the address, scanner signatures and probe bursts still apply. wicket keeps no copy of app tokens.
+10. wrong explicit token (`X-Wicket-Token`, `?wicket_token=`, and `X-API-Key` / `x-access-token` / `?token=` where no pass-through rule covers them) → strike; foreign bearer → ignored
+11. session cookie → pass
+12. nothing presented: known scanner path/agent (third hit) or probe burst → scanner ban, else the password page (JSON 401 for non-browsers)
 
 ## Ban triggers
 
@@ -51,6 +53,7 @@ All triggers end in the same place (`src/actions/ban.ts`): a permanent `ban:<ip>
 | scanner | observe | origin 404/400/405 per IP, isolate memory | 100 in 60 s |
 | scanner (slow) | both | anonymous probes per IP, Analytics Engine, network-wide, every 5 min | 30 in 5 min |
 | origin login failure | observe | matched watch rule per IP, KV | 5 in 10 min |
+| app rejected a pass-through credential | gated + `passthrough` | origin 401 per IP, KV (same counter) | 5 in 10 min |
 
 ### Watch rules and recipes
 

@@ -11,6 +11,7 @@ cookie_days: 365
 
 hosts:
   nas.example.com: gated
+  api.example.com: { passthrough: api }   # gated, but the app's own tokens reach the app (see Pass-through)
   photos.example.com: { mode: observe, recipe: immich }
   blog.example.com:
     mode: observe
@@ -88,7 +89,24 @@ Without `OWNER_PASSWORD` or `COOKIE_SECRET` the login page answers 503: wicket f
 | `x-access-token`, `X-API-Key`, `?token=` | yes, untouched | yes |
 | `Authorization: Bearer <token>` | yes, untouched | **no** (it may be the app's own auth) |
 
-Before gating a host whose clients already send one of the pass-through carriers, register their token values in `API_TOKENS`, or those clients get banned. `OPTIONS` preflights and `/.well-known/acme-challenge/` always pass.
+`OPTIONS` preflights and `/.well-known/acme-challenge/` always pass. A host whose clients already send one of the pass-through carriers needs either their values in `API_TOKENS` or a pass-through rule, or those clients get banned.
+
+## Pass-through: let the app keep its own auth
+
+Most apps you would gate already validate a token of their own (an API key, a bearer, a session cookie). A `passthrough` rule on a gated host says which carriers those are; a request carrying one skips the password page and reaches the app, which decides. wicket stores no app tokens. The app's **401** counts as a failed login for the address (`limits.origin`, five in ten minutes → ban), and scanner signatures and probe bursts apply as on observe hosts. Browsers without a credential still get the password page.
+
+```yaml
+hosts:
+  api.example.com: { passthrough: api }        # preset: Authorization, X-API-Key, x-access-token, ?token=
+  app.example.com:
+    passthrough:
+      headers: [authorization, x-session]      # header names
+      cookies: [sid]                           # the app's session cookie
+      params: [token]                          # query parameters
+      paths: [/api/, /mcp]                     # optional: only on these prefixes
+```
+
+What this costs: anyone can add such a header and reach the app's authentication code, exactly as on an observe host. The app's own login must therefore be sound; wicket adds the ban after five rejections. A stale token in a polling client is five 401s away from a ban, so keep `limits.origin` at five or more. Owner-trusted and allow-listed addresses are never banned this way.
 
 ## Observe mode and recipes
 
