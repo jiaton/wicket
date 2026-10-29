@@ -48,7 +48,7 @@ Then connect your Cloudflare account: create an API token (Account → *Analytic
 - **Country rules** per host (`allow:US,CA` or `deny:RU`), on the settings page or in the file.
 - **Share a host**: the settings page makes a link that opens one host for a day or a week without the password (a friend trying your app); revoke it any time.
 - **Ban message**: address, country, host, reason, **Unban** button. Scanner bans come as one digest line per hour; nothing happened → no message.
-- **Settings page** `/__wicket/settings` (owner): hosts and modes, allow lists and trust, limits, notification policy, newest bans with Unban. Everything saved there is live within 30 s, no redeploy.
+- **Settings page** `/__wicket/settings` (owner): hosts with modes, country rules, pass-through and 24-hour counts; allow lists and trust; limits; shares; passwords; Cloudflare wiring; notification policy; searchable bans with Unban. Everything saved there is live within 30 s, no redeploy.
 - **Banned yourself?** Settings page, the link in the message, or `cf kv keys delete --force --namespace-id <id> 'ban:<ip>'`.
 - **Changes**: hosts, access lists, limits and the notification policy → settings page (or `wicket.yaml` + redeploy, which stays the reproducible base); passwords and tokens → secrets + redeploy.
 

@@ -69,6 +69,10 @@ cloudflare:
   reconcile_cron: "17 * * * *"     # KV bans ↔ IP list
 ```
 
+## The settings page, section by section
+
+*Hosts* (one row per host: mode, recipe, country rule, pass-through, and with a Cloudflare token the last 24 hours: requests, requests that reached the app, probes, bans, blocked; hosts seen in traffic but not listed appear below the table), *Access*, *Limits*, *Shares*, *Passwords*, *Cloudflare*, *Notifications*, *Bans* (search by address prefix, host or country; Unban). Every save is live on every data centre within 30 seconds.
+
 ## Share links
 
 *Shares* on the settings page creates a link for one host (1 hour to 30 days, with a label): `https://app.example.com/__wicket/share?s=…`. Opening it sets a cookie for that host alone and sends the visitor to the app; no password, no settings access. The link is shown once. Revoking the share (same page) invalidates the link and every cookie it issued; shares expire on their own.

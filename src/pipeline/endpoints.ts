@@ -13,6 +13,7 @@ import { LIMIT_FIELDS, LIMIT_KEYS, parseDuration, runtimeOverridesOf, validAllow
 import { RECIPES } from '../recipes';
 import { resolveRuntime } from '../runtime';
 import { analyticsReachable, ensureList, ensureWafRule, findZone, listLists, verifyToken, wafRuleState } from '../cloudflare/setup';
+import { hostStats, type HostStats } from '../cloudflare/analytics';
 import type { CloudflareView } from '../ui/settings';
 import { isTrusted, markTrusted } from '../store/trust';
 import { loginPage, messagePage, setupPage } from '../ui/pages';
@@ -308,7 +309,7 @@ async function settings(c: Ctx): Promise<Result> {
   }
 
   const [policy, queues, lockdown, bans, rt, shares] = await Promise.all([resolvePolicy(c.env), queueStatus(c.env, now), readLockdown(c.env), listBans(c.env), resolveRuntime(c.env), listShares(c.env)]);
-  const cloudflare = await cloudflareStatus(c, rt.settings.listId, rt.overrides.cloudflare?.zoneId);
+  const [cloudflare, stats] = await Promise.all([cloudflareStatus(c, rt.settings.listId, rt.overrides.cloudflare?.zoneId), c.env.CF_API_TOKEN && c.env.CF_ACCOUNT_ID ? hostStats(c.env, c.deps.fetch, rt.settings.analyticsDataset) : Promise.resolve({} as Record<string, HostStats>)]);
   const savedHosts = new Set(Object.keys(rt.overrides.hosts ?? {}).map((h) => h.toLowerCase()));
   const hostRows: HostRow[] = Object.entries(rt.hosts)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -320,6 +321,7 @@ async function settings(c: Ctx): Promise<Result> {
       passthroughSpec: h.passthrough && !Object.values(PASSTHROUGH_PRESETS).some((p) => JSON.stringify(p) === JSON.stringify(h.passthrough)) ? formatPassthroughSpec(h.passthrough) : '',
       watchRules: h.watch.length,
       countries: formatCountriesSpec(h.countries),
+      stats: stats[host],
       source: savedHosts.has(host) ? 'saved' : 'config',
     }));
   const banCounts: Partial<Record<BanKind | 'unknown', number>> = {};
@@ -327,7 +329,8 @@ async function settings(c: Ctx): Promise<Result> {
   // Newest first from the key metadata; records are only read for the page shown, and only
   // for bans older than the metadata (the hourly job backfills those).
   const pageNo = Math.max(1, Math.floor(Number(c.url.searchParams.get('page')) || 1));
-  const ordered = [...bans].sort((x, y) => (y.at ?? 0) - (x.at ?? 0));
+  const query = (c.url.searchParams.get('q') ?? '').trim().toLowerCase().slice(0, 64);
+  const ordered = [...bans].filter((b) => !query || b.ip.toLowerCase().startsWith(query) || (b.host ?? '').toLowerCase().includes(query) || (b.country ?? '').toLowerCase() === query).sort((x, y) => (y.at ?? 0) - (x.at ?? 0));
   const slice = ordered.slice((pageNo - 1) * RECENT_BANS, pageNo * RECENT_BANS);
   const recent: BanRow[] = await Promise.all(
     slice.map(async (b) => {
@@ -392,6 +395,9 @@ async function settings(c: Ctx): Promise<Result> {
         page: Math.min(pageNo, pages),
         pages,
         perPage: RECENT_BANS,
+        query,
+        matching: ordered.length,
+        hostsNotInTable: Object.keys(stats).filter((h) => !(h in rt.hosts)).sort(),
         now,
         notice,
       }),

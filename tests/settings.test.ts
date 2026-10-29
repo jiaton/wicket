@@ -142,7 +142,7 @@ describe('/__wicket/settings', () => {
     expect(p1).toContain('<code>203.0.113.1</code>');
     expect(p1).toContain('<code>203.0.113.30</code>');
     expect(p1).not.toContain('<code>203.0.113.31</code>');
-    expect(p1).toContain('href="?page=2"');
+    expect(p1).toContain('href="?page=2#bans"');
     const p2 = await (await h.run(h.request('/__wicket/settings?page=2', { headers: { cookie: owner } }))).text();
     expect(p2).toContain('page 2 of 2');
     expect(p2).toContain('<code>203.0.113.31</code>');
@@ -380,5 +380,39 @@ describe('country rules on the page', () => {
     expect((await h.run(h.request('/', { ip: '203.0.113.9', headers: { 'cf-ipcountry': 'JP', accept: '*/*' } }))).status).toBe(401);
     const page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
     expect(page).toContain('name="countries" value="deny:RU,CN"');
+  });
+});
+
+describe('per-host stats and ban search', () => {
+  const cookieOf = (res: Response) => (res.headers.get('set-cookie') ?? '').split(';')[0]!;
+  it('shows 24 h counts per host from Analytics and lists unlisted hosts; bans filter by prefix, host or country', async () => {
+    const rows = [
+      { host: 'nas.example.test', outcome: 'pass', n: '120' },
+      { host: 'nas.example.test', outcome: 'reject', n: '30' },
+      { host: 'nas.example.test', outcome: 'ban-scan', n: '2' },
+      { host: 'nas.example.test', outcome: 'banned', n: '400' },
+      { host: 'stray.example.test', outcome: 'reject', n: '5' },
+    ];
+    const h = harness({ CF_API_TOKEN: 't', CF_ACCOUNT_ID: 'acc', HOSTS_JSON: JSON.stringify({ 'nas.example.test': { mode: 'gated', passthrough: 'api' } }) }, {
+      'analytics_engine/sql': async (req) => new Response(JSON.stringify({ data: (await req.text()).includes('GROUP BY host, outcome') ? rows : [{ n: '1' }] })),
+    });
+    const owner = cookieOf(await h.login('owner-pw'));
+    await h.kv.put('ban:203.0.113.1', '{}', { metadata: { kind: 'scan', at: 1, host: 'nas.example.test', country: 'SG' } });
+    await h.kv.put('ban:198.51.100.2', '{}', { metadata: { kind: 'password', at: 2, host: 'docker.example.test', country: 'US' } });
+    let page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('24 h: 552 requests, 120 through, 32 probes, 2 bans, 400 blocked');
+    expect(page).toContain('Also seen in the last 24 h, no entry');
+    expect(page).toContain('<code>stray.example.test</code>');
+    expect(page).toContain('203.0.113.1');
+    expect(page).toContain('198.51.100.2');
+    page = await (await h.run(h.request('/__wicket/settings?q=203.0', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('2 total, 1 matching <code>203.0</code>');
+    expect(page).toContain('203.0.113.1');
+    expect(page).not.toContain('198.51.100.2');
+    page = await (await h.run(h.request('/__wicket/settings?q=us', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('198.51.100.2');
+    expect(page).not.toContain('203.0.113.1');
+    page = await (await h.run(h.request('/__wicket/settings?q=docker', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('1 matching');
   });
 });

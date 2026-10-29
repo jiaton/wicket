@@ -1,3 +1,4 @@
+import type { HostStats } from '../cloudflare/analytics';
 import { HOST_MODES, type HostMode } from '../config/hosts';
 import { formatDuration, LIMIT_FIELDS, type LimitKey } from '../config/runtime';
 import { DIGEST_CHOICES, KIND_LABELS, POLICY_KINDS, type Delivery, type NotifyPolicy } from '../config/notifications';
@@ -42,6 +43,8 @@ export interface HostRow {
   watchRules: number;
   /** `allow:US,CA` / `deny:RU` / ''. */
   countries: string;
+  /** Last 24 h from Analytics Engine; absent without a Cloudflare token. */
+  stats?: HostStats;
   /** Where the effective entry comes from. */
   source: 'config' | 'saved';
 }
@@ -91,6 +94,11 @@ export interface SettingsView {
   page: number;
   pages: number;
   perPage: number;
+  /** Bans search (address prefix, host substring or country). */
+  query: string;
+  matching: number;
+  /** Hosts seen in the last 24 h that have no entry (wildcard routes: they get the default mode). */
+  hostsNotInTable: string[];
   now: number;
   notice?: string;
 }
@@ -165,6 +173,8 @@ export function settingsPage(v: SettingsView): string {
   const modeOptions: [string, string][] = HOST_MODES.map((m) => [m, `${m} — ${MODE_HINTS[m]}`]);
   const recipeOptions: [string, string][] = [['', 'no recipe'], ...v.recipes.map((r): [string, string] => [r, r])];
   const passthroughOptions = (): [string, string][] => [['', 'none'], ...v.passthroughPresets.map((p): [string, string] => [p, `${p} (app's own tokens reach the app)`]), ['custom', 'custom rule →']];
+  const n = (x: number) => x.toLocaleString('en-US');
+  const statsLine = (s?: HostStats) => (s ? ` · 24 h: ${n(s.requests)} requests, ${n(s.visits)} through, ${n(s.probes)} probes, ${n(s.bans)} ban${s.bans === 1 ? '' : 's'}${s.blocked ? `, ${n(s.blocked)} blocked` : ''}` : '');
   const countriesInput = (value: string) => `<input name="countries" value="${esc(value)}" placeholder="countries: allow:US,CA or deny:RU" aria-label="country rule" class="countries">`;
   const specInput = (value: string) => `<input name="spec" value="${esc(value)}" placeholder="headers=authorization; cookies=sid; paths=/api/; status=401,403" aria-label="custom pass-through rule" class="spec">`;
   const hostRows = v.hosts.length
@@ -172,7 +182,7 @@ export function settingsPage(v: SettingsView): string {
         .map(
           (h) =>
             `<tr><td><form method="post" action="${esc(v.action)}" class="hostrow"><input type="hidden" name="host" value="${esc(h.host)}">` +
-            `<b>${esc(h.host)}</b> <small>${h.source === 'saved' ? 'saved here' : 'wicket.yaml'}${h.watchRules ? ` · ${h.watchRules} watch rule${h.watchRules === 1 ? '' : 's'}` : ''}</small><br>` +
+            `<b>${esc(h.host)}</b> <small>${h.source === 'saved' ? 'saved here' : 'wicket.yaml'}${h.watchRules ? ` · ${h.watchRules} watch rule${h.watchRules === 1 ? '' : 's'}` : ''}${statsLine(h.stats)}</small><br>` +
             `${select('mode', modeOptions, h.mode)} ${select('recipe', recipeOptions, h.recipe)} ${select('passthrough', passthroughOptions(), h.passthrough)} ${countriesInput(h.countries)} ${specInput(h.passthroughSpec)}` +
             `<span class="actions"><button type="submit" name="action" value="host.save" class="small">Save</button>` +
             `${h.source === 'saved' ? `<button type="submit" name="action" value="host.remove" class="secondary small">Remove</button>` : ''}</span></form></td></tr>`,
@@ -200,6 +210,7 @@ export function settingsPage(v: SettingsView): string {
 <h2 id="hosts">Hosts</h2>
 <p><small>Mode, recipe, country rule and pass-through per host (a custom rule: <code>headers=…; cookies=…; params=…; paths=…; status=…</code>, see the docs). Changes are live within 30 s; a host must also be routed to the Worker (its own route in wicket.yaml, or <code>routes: wildcard</code>). Unlisted routed hosts are <b>${esc(v.defaultMode)}</b>.${v.runtimeOverridden ? ' Entries marked <i>saved here</i> override wicket.yaml until removed or reset.' : ''}</small></p>
 <table class="hosts">${hostRows}</table>
+${v.hostsNotInTable.length ? `<p><small>Also seen in the last 24 h, no entry (default mode <b>${esc(v.defaultMode)}</b>): ${v.hostsNotInTable.map((h) => `<code>${esc(h)}</code>`).join(', ')}</small></p>` : ''}
 <form method="post" action="${esc(v.action)}" class="hostrow add"><input name="host" placeholder="new.host.example.com" aria-label="hostname" required pattern="[A-Za-z0-9.-]+">${select('mode', modeOptions, 'gated')} ${select('recipe', recipeOptions, '')} ${select('passthrough', passthroughOptions(), '')} ${countriesInput('')} ${specInput('')}<button type="submit" name="action" value="host.save" class="small">Add host</button></form>
 ${v.runtimeOverridden ? `<form method="post" action="${esc(v.action)}" class="inline"><button type="submit" name="action" value="runtime.reset" class="secondary small">Reset hosts, access and limits to wicket.yaml</button></form>` : ''}
 
@@ -306,12 +317,13 @@ ${v.notice ? `<p class="ok" role="status">${esc(v.notice)}</p>` : ''}
 </form>
 
 <h2 id="bans">Bans</h2>
-<p><small>${total} total, newest first, ${v.perPage} per page. Unban removes the address from KV and from the Cloudflare IP list.</small></p>
+<p><small>${total} total${v.query ? `, ${v.matching} matching <code>${esc(v.query)}</code>` : ''}, newest first, ${v.perPage} per page. Unban removes the address from KV and from the Cloudflare IP list.</small></p>
+<form method="get" action="${esc(v.action)}" class="row search"><input name="q" value="${esc(v.query)}" placeholder="search: address prefix, host or country" aria-label="search bans"><button type="submit" class="secondary small">Search</button>${v.query ? `<a href="${esc(v.action)}#bans" class="small">clear</a>` : ''}</form>
 <table>${banRows}</table>
 ${
   v.pages > 1
-    ? `<p class="pager"><small>${v.page > 1 ? `<a href="?page=${v.page - 1}">← newer</a>` : '<span>← newer</span>'} · page ${v.page} of ${v.pages} · ${
-        v.page < v.pages ? `<a href="?page=${v.page + 1}">older →</a>` : '<span>older →</span>'
+    ? `<p class="pager"><small>${v.page > 1 ? `<a href="?page=${v.page - 1}${v.query ? `&q=${encodeURIComponent(v.query)}` : ''}#bans">← newer</a>` : '<span>← newer</span>'} · page ${v.page} of ${v.pages} · ${
+        v.page < v.pages ? `<a href="?page=${v.page + 1}${v.query ? `&q=${encodeURIComponent(v.query)}` : ''}#bans">older →</a>` : '<span>older →</span>'
       }</small></p>`
     : ''
 }
