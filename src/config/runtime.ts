@@ -16,6 +16,8 @@ export interface RuntimeOverrides {
   hosts?: Record<string, unknown>;
   access?: Partial<AccessOverride>;
   limits?: Partial<Record<LimitKey, number>>;
+  /** Ids of Cloudflare objects created from the settings page (CF_LIST_ID in the secrets wins). */
+  cloudflare?: { listId?: string; zoneId?: string };
 }
 
 export interface AccessOverride {
@@ -80,6 +82,11 @@ export function runtimeOverridesOf(raw: unknown): RuntimeOverrides {
     }
     out.limits = limits;
   }
+  if (d.cloudflare && typeof d.cloudflare === 'object') {
+    const cf = d.cloudflare as Record<string, unknown>;
+    const id = (v: unknown) => (typeof v === 'string' && /^[0-9a-f]{32}$/.test(v) ? v : undefined);
+    out.cloudflare = { ...(id(cf.listId) ? { listId: id(cf.listId) } : {}), ...(id(cf.zoneId) ? { zoneId: id(cf.zoneId) } : {}) };
+  }
   return out;
 }
 
@@ -98,6 +105,7 @@ export function applyOverrides(base: Settings, o: RuntimeOverrides): Settings {
     }
   }
   if (o.limits) for (const k of LIMIT_KEYS) if (o.limits[k] !== undefined) s[k] = o.limits[k]!;
+  if (!s.listId && o.cloudflare?.listId) s.listId = o.cloudflare.listId;
   return s;
 }
 

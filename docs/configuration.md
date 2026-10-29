@@ -74,8 +74,8 @@ cloudflare:
 | `FRIEND_PASSWORD` | optional second password |
 | `API_TOKENS` | optional, `name:token` comma-separated; `name:token@host1\|host2` restricts hosts |
 | `NOTIFY_JSON` | optional channel list (below); or just `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` |
-| `CF_API_TOKEN`, `CF_ACCOUNT_ID` | optional; an API token with *Account Analytics: Read* (traffic alerts) and *Account Filter Lists: Edit* (edge bans) |
-| `CF_LIST_ID` | optional; the IP list for edge bans |
+| `CF_API_TOKEN`, `CF_ACCOUNT_ID` | optional; an API token with Account → *Analytics: Read* (traffic alerts), *Filter Lists: Edit* (edge bans) and, for the one-click setup on the settings page, Zone → *Zone: Read*, *WAF: Edit* |
+| `CF_LIST_ID` | optional; the IP list for edge bans. Not needed when the list is created from the settings page (its id is kept in KV) |
 
 Without `OWNER_PASSWORD` or `COOKIE_SECRET` the login page answers 503: wicket fails closed.
 
@@ -197,6 +197,10 @@ Severities: scanner bans, unbans, reconcile changes and traffic digests are `inf
 ## fail2ban companion
 
 Hosts that must stay direct (media servers, a KVM) can keep fail2ban. `contrib/fail2ban/` has an action that pushes each ban into the same Cloudflare IP list. Its items are left alone by wicket's reconcile (only items whose comment starts with `wicket ` are managed).
+
+## Cloudflare section of the settings page
+
+With `CF_API_TOKEN` and `CF_ACCOUNT_ID` set, the settings page shows whether the token is active, whether Analytics Engine answers (if not: the account switch under *Workers & Pages → Analytics Engine*), which IP list bans go to and whether the zone has the WAF rule that blocks it. Two buttons create what is missing: the list `wicket_banned` (Account → *Filter Lists: Edit*) and the rule `ip.src in $wicket_banned → Block` on the zone (Zone → *Zone: Read* and *WAF: Edit*). The ids are stored in KV; `CF_LIST_ID` in the secrets takes precedence when both exist. If you would rather not give the Worker a token with WAF permissions, create the rule in the dashboard and leave those two permissions off.
 
 ## When KV writes fail
 

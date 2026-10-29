@@ -264,3 +264,78 @@ describe('access and limits on the settings page', () => {
     expect((await post(h, owner, { ...fields, 'limit.lockdownSeconds': '90d' })).status).toBe(400);
   });
 });
+
+describe('Cloudflare section', () => {
+  const cookieOf = (res: Response) => (res.headers.get('set-cookie') ?? '').split(';')[0]!;
+  const post = (h: ReturnType<typeof harness>, cookie: string, fields: Record<string, string>) =>
+    h.run(h.request('/__wicket/settings', { method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' }, body: new URLSearchParams(fields) }));
+
+  /** A fake Cloudflare account: token ok, no lists yet, zone known, no custom ruleset yet. */
+  function account() {
+    const state = { lists: [] as { id: string; name: string; kind: string; num_items: number }[], rules: null as null | { id: string; rules: unknown[] }, posts: [] as string[] };
+    const json = (result: unknown, status = 200) => new Response(JSON.stringify({ success: status < 400, result, errors: status < 400 ? [] : [{ code: status, message: 'nope' }] }), { status });
+    const handlers = {
+      'user/tokens/verify': () => json({ id: 'tok', status: 'active' }),
+      'analytics_engine/sql': () => new Response(JSON.stringify({ data: [{ n: '42' }] })),
+      'rules/lists/0123456789abcdef0123456789abcdef/items': () => json({ operation_id: 'op' }),
+      'rules/lists': (req: Request) => {
+        if (req.method === 'POST') {
+          state.lists.push({ id: '0123456789abcdef0123456789abcdef', name: 'wicket_banned', kind: 'ip', num_items: 0 });
+          return json({ id: '0123456789abcdef0123456789abcdef' });
+        }
+        return json(state.lists);
+      },
+      'zones?name=': () => json([{ id: 'fedcba9876543210fedcba9876543210', name: 'example.test' }]),
+      'rulesets/phases/http_request_firewall_custom/entrypoint': (req: Request) => {
+        if (req.method === 'PUT') {
+          state.rules = { id: 'rs1', rules: [{ id: 'r1', action: 'block', expression: 'ip.src in $wicket_banned' }] };
+          return json(state.rules);
+        }
+        return state.rules ? json(state.rules) : json(null, 404);
+      },
+    };
+    return { state, handlers };
+  }
+
+  it('shows what is missing, creates the list and the WAF rule, and bans then reach the new list', async () => {
+    const acc = account();
+    const h = harness({ CF_API_TOKEN: 't', CF_ACCOUNT_ID: 'acc', ZONE: 'example.test', COOKIE_DOMAIN: 'example.test' }, acc.handlers);
+    const owner = cookieOf(await h.login('owner-pw'));
+    let page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('<b>API token</b></td><td>active');
+    expect(page).toContain('ok, 42 rows today');
+    expect(page).toContain('value="cf.list"');
+    expect(page).not.toContain('value="cf.waf"'); // no list yet
+
+    expect((await post(h, owner, { action: 'cf.list' })).headers.get('location')).toContain('ok=cf-list');
+    const { resolveRuntime } = await import('../src/runtime');
+    expect((await resolveRuntime(h.env)).settings.listId).toBe('0123456789abcdef0123456789abcdef');
+    page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('<code>wicket_banned</code> · 0 items <small>created here</small>');
+    expect(page).toContain('<span class="warn">missing</span>'); // WAF rule
+    expect(page).toContain('value="cf.waf"');
+
+    expect((await post(h, owner, { action: 'cf.waf' })).headers.get('location')).toContain('ok=cf-waf');
+    expect(acc.state.rules?.rules).toHaveLength(1);
+    page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('<b>WAF rule</b><br><small>blocks the list on example.test</small></td><td>present');
+
+    // A ban now goes to the list created from the page, without CF_LIST_ID in the secrets.
+    for (let i = 0; i < 3; i++) await h.login('nope', {}, { ip: '203.0.113.9' });
+    const added = h.net.sent.find((s) => s.url.includes('rules/lists/0123456789abcdef0123456789abcdef/items') && s.init?.method === 'POST');
+    expect(added?.body).toEqual([{ ip: '203.0.113.9', comment: expect.stringContaining('wrong passwords') }]);
+  });
+
+  it('explains a missing or rejected token instead of guessing', async () => {
+    const h = harness();
+    const owner = cookieOf(await h.login('owner-pw'));
+    const page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('<span class="warn">missing</span>');
+    expect(page).toContain('CF_API_TOKEN missing');
+    expect((await post(h, owner, { action: 'cf.list' })).status).toBe(400);
+    const bad = harness({ CF_API_TOKEN: 't', CF_ACCOUNT_ID: 'acc' }, { 'user/tokens/verify': () => new Response(JSON.stringify({ success: false, errors: [{ code: 1000, message: 'Invalid API Token' }] }), { status: 401 }) });
+    const owner2 = cookieOf(await bad.login('owner-pw'));
+    const page2 = await (await bad.run(bad.request('/__wicket/settings', { headers: { cookie: owner2 } }))).text();
+    expect(page2).toContain('<span class="warn">invalid</span> <small>1000: Invalid API Token</small>');
+  });
+});

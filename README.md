@@ -37,7 +37,7 @@ cf deploy --secrets-file secrets.json     # 4. deploy (wrangler: npm run config:
 curl -sI https://nas.example.com/__wicket/login | head -1   # 200 = live, 503 = secrets missing
 ```
 
-Then, once, in the dashboard: enable Analytics Engine (*Workers & Pages → Analytics Engine*); for edge bans create an IP list (`cf rules lists create --name wicket_banned --kind ip`), a WAF rule `ip.src in $wicket_banned → Block`, and add `CF_API_TOKEN`, `CF_ACCOUNT_ID`, `CF_LIST_ID` to the secrets. Make your reverse proxy trust `Cf-Connecting-Ip`.
+Then connect your Cloudflare account: create an API token (Account → *Analytics: Read*, *Filter Lists: Edit*; Zone → *Zone: Read*, *WAF: Edit*), put it and your account id in the secrets as `CF_API_TOKEN` / `CF_ACCOUNT_ID`, redeploy, and open the **Cloudflare** section of `/__wicket/settings`: it checks the token, tells you if Analytics Engine still needs its one-time switch in the dashboard (*Workers & Pages → Analytics Engine*), and creates the IP list and the WAF rule for edge bans with one click each. Make your reverse proxy trust `Cf-Connecting-Ip`.
 
 > Never run `cf deploy` without `--secrets-file` (cf 1.0 beta uploads a version with no secrets; `npm run deploy` refuses for that reason). The KV namespace is created on the first deploy.
 

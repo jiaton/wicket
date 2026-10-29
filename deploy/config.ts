@@ -382,6 +382,7 @@ export function toVars(cfg: WicketConfig): Record<string, string> {
     ORIGIN_FAIL_WINDOW_SECONDS: String(cfg.limits.origin.window),
     HOSTS_JSON: JSON.stringify(hostsJson),
     DEFAULT_MODE: cfg.defaultMode,
+    ZONE: cfg.zone,
     COOKIE_DAYS: String(cfg.cookieDays),
     COOKIE_DOMAIN: cfg.cookieDomain,
     ADMIN_HOSTS: cfg.alerts.adminHosts.join(','),

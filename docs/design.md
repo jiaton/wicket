@@ -100,6 +100,8 @@ Why a fixed window and not an incremental cursor: Analytics Engine samples and r
 
 ## Cloudflare side
 
+The settings page carries a *Cloudflare* section that verifies the API token, probes Analytics Engine and can create the IP list and the zone WAF rule (`src/cloudflare/setup.ts`); the ids it creates live in the runtime overrides, so a fresh deploy needs only the token and account id in its secrets.
+
 Required once per account: the Analytics Engine switch (dashboard only), an IP list, a WAF custom rule `ip.src in $<list>` → block, and an API token with *Account Rule Lists: Edit* (+ *Account Analytics: Read* for the cron alerts).
 
 Two periodic jobs: every five minutes the retry of failed IP-list calls (the Lists API takes one operation per list at a time and answers 429 to a second ban landing within seconds; the address is kept in KV under `edgeq` until the list has it), the traffic analysis and the notification digests; hourly the **reconcile** (`src/cron/reconcile.ts`), which adds KV bans missing from the list (an API call failed, the list was recreated) and removes list items wicket wrote whose KV ban is gone. Items written by anyone else (fail2ban, manual) are identified by their comment and never touched, so one list can have several writers. Items younger than ten minutes are never removed: KV listings are eventually consistent, and a reconcile running a minute after a ban once removed the ban's own list entry.

@@ -1,6 +1,6 @@
 import { LIST_COMMENT_MARKER, listAddMany, listItems, listRemoveIds } from '../cloudflare/lists';
 import type { Env } from '../config/env';
-import { settings } from '../config/settings';
+import { resolveRuntime } from '../runtime';
 import { emit, type Fetch } from '../notify';
 import { clearPendingEdge, isBanned, listBans, readPendingEdge } from '../store/bans';
 
@@ -25,8 +25,8 @@ export interface ReconcileResult {
 export const LIST_GRACE_MS = 10 * 60_000;
 
 export async function reconcile(env: Env, doFetch: Fetch, now: number): Promise<ReconcileResult | null> {
-  const cfg = settings(env);
-  const items = await listItems(env, doFetch);
+  const cfg = (await resolveRuntime(env)).settings;
+  const items = await listItems(env, doFetch, cfg.listId);
   if (items === null) return null;
 
   const banned = new Set((await listBans(env)).map((b) => b.ip));
@@ -36,10 +36,10 @@ export async function reconcile(env: Env, doFetch: Fetch, now: number): Promise<
   const stale = items.filter((it) => it.comment.startsWith(LIST_COMMENT_MARKER) && !banned.has(it.ip) && settled(it));
 
   const result: ReconcileResult = { added: [], removed: [] };
-  if (added.length && (await listAddMany(env, doFetch, added.map((ip) => ({ ip, comment: `${LIST_COMMENT_MARKER}${cfg.siteName}: restored by reconcile` }))))) {
+  if (added.length && (await listAddMany(env, doFetch, cfg.listId, added.map((ip) => ({ ip, comment: `${LIST_COMMENT_MARKER}${cfg.siteName}: restored by reconcile` }))))) {
     result.added = added;
   }
-  if (stale.length && (await listRemoveIds(env, doFetch, stale.map((it) => it.id)))) {
+  if (stale.length && (await listRemoveIds(env, doFetch, cfg.listId, stale.map((it) => it.id)))) {
     result.removed = [...new Set(stale.map((it) => it.ip))];
   }
 
@@ -67,10 +67,10 @@ export async function reconcile(env: Env, doFetch: Fetch, now: number): Promise<
 export async function repairEdge(env: Env, doFetch: Fetch): Promise<string[]> {
   const pending = await readPendingEdge(env);
   if (!pending.length) return [];
-  const cfg = settings(env);
+  const cfg = (await resolveRuntime(env)).settings;
   const still: string[] = [];
   for (const ip of pending) if (await isBanned(env, ip)) still.push(ip);
-  if (still.length && !(await listAddMany(env, doFetch, still.map((ip) => ({ ip, comment: `${LIST_COMMENT_MARKER}${cfg.siteName}: added after a failed list call` }))))) return [];
+  if (still.length && !(await listAddMany(env, doFetch, cfg.listId, still.map((ip) => ({ ip, comment: `${LIST_COMMENT_MARKER}${cfg.siteName}: added after a failed list call` }))))) return [];
   await clearPendingEdge(env);
   return still;
 }

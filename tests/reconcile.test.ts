@@ -119,10 +119,10 @@ describe('IP list writes', () => {
     let calls = 0;
     const net = fakeNetwork({ 'rules/lists/list/items': () => (calls++ === 0 ? new Response('{"errors":[{"code":10000}]}', { status: 429 }) : new Response('{"result":{}}')) });
     const env = makeEnv(new FakeKV(), new FakeAnalytics(), LIST_ENV);
-    expect(await listAddMany(env, net.doFetch, [{ ip: '10.0.0.1', comment: 'wicket test: x' }], 0)).toBe(true);
+    expect(await listAddMany(env, net.doFetch, 'list', [{ ip: '10.0.0.1', comment: 'wicket test: x' }], 0)).toBe(true);
     expect(calls).toBe(2);
     const always429 = fakeNetwork({ 'rules/lists/list/items': () => new Response('busy', { status: 429 }) });
-    expect(await listAddMany(env, always429.doFetch, [{ ip: '10.0.0.1', comment: 'wicket test: x' }], 0)).toBe(false);
+    expect(await listAddMany(env, always429.doFetch, 'list', [{ ip: '10.0.0.1', comment: 'wicket test: x' }], 0)).toBe(false);
   });
 
   it('a ban whose list call failed is remembered and added by the five-minute repair', async () => {

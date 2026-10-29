@@ -46,9 +46,9 @@ async function announce(env: Env, deps: Deps, cfg: Settings, b: BanInput, now: n
       : b.kind === 'origin'
         ? `${b.fails} failed logins at the app itself`
         : `${b.fails} wrong ${b.kind === 'token' ? 'API tokens' : 'passwords'}`);
-  const edge = await listAdd(env, deps.fetch, b.ip, `${LIST_COMMENT_MARKER}${cfg.siteName}: ${reason} on ${b.host}`).catch(() => false);
+  const edge = await listAdd(env, deps.fetch, cfg.listId, b.ip, `${LIST_COMMENT_MARKER}${cfg.siteName}: ${reason} on ${b.host}`).catch(() => false);
   // A failed list call (rate limit, outage) is retried by the five-minute job, not left for the hourly reconcile.
-  if (!edge && env.CF_LIST_ID) await addPendingEdge(env, b.ip).catch(() => undefined);
+  if (!edge && cfg.listId) await addPendingEdge(env, b.ip).catch(() => undefined);
   await emit(
     env,
     deps.fetch,

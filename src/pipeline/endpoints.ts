@@ -11,6 +11,8 @@ import { defaultMode, hostTableOf, isHostMode, PASSTHROUGH_PRESETS } from '../co
 import { LIMIT_FIELDS, LIMIT_KEYS, parseDuration, runtimeOverridesOf, validAllowEntry, validHostname, type LimitKey } from '../config/runtime';
 import { RECIPES } from '../recipes';
 import { resolveRuntime } from '../runtime';
+import { analyticsReachable, ensureList, ensureWafRule, findZone, listLists, verifyToken, wafRuleState } from '../cloudflare/setup';
+import type { CloudflareView } from '../ui/settings';
 import { isTrusted, markTrusted } from '../store/trust';
 import { loginPage, messagePage } from '../ui/pages';
 import { settingsPage, type BanRow, type HostRow } from '../ui/settings';
@@ -147,6 +149,10 @@ async function settings(c: Ctx): Promise<Result> {
       const result = action === 'access.save' ? await saveAccess(c, form) : await saveLimits(c, form);
       if (result !== 'ok') return [html(messagePage('Not saved', result), 400), 'admin'];
       notice = action === 'access.save' ? 'access-saved' : 'limits-saved';
+    } else if (action === 'cf.list' || action === 'cf.waf') {
+      const result = await cloudflareAction(c, action);
+      if (result !== 'ok') return [html(messagePage('Cloudflare', result), 400), 'admin'];
+      notice = action === 'cf.list' ? 'cf-list' : 'cf-waf';
     } else if (action === 'runtime.reset') {
       await clearRuntimeSettings(c.env);
       c.invalidateRuntime();
@@ -165,6 +171,7 @@ async function settings(c: Ctx): Promise<Result> {
   }
 
   const [policy, queues, lockdown, bans, rt] = await Promise.all([resolvePolicy(c.env), queueStatus(c.env, now), readLockdown(c.env), listBans(c.env), resolveRuntime(c.env)]);
+  const cloudflare = await cloudflareStatus(c, rt.settings.listId, rt.overrides.cloudflare?.zoneId);
   const savedHosts = new Set(Object.keys(rt.overrides.hosts ?? {}).map((h) => h.toLowerCase()));
   const hostRows: HostRow[] = Object.entries(rt.hosts)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -202,6 +209,8 @@ async function settings(c: Ctx): Promise<Result> {
     'runtime-reset': 'Hosts, access and limits reset to wicket.yaml.',
     'access-saved': 'Access settings saved. Live on every data centre within 30 s.',
     'limits-saved': 'Limits saved. Live on every data centre within 30 s.',
+    'cf-list': 'IP list ready. Bans are added to it from now on.',
+    'cf-waf': 'WAF rule ready. Listed addresses are blocked at the edge on every proxied host.',
   };
   const notice = ok ? NOTICES[ok] : undefined;
   return [
@@ -223,6 +232,7 @@ async function settings(c: Ctx): Promise<Result> {
           saved: rt.overrides.access !== undefined,
         },
         limits: { values: Object.fromEntries(LIMIT_KEYS.map((k) => [k, rt.settings[k]])) as Record<LimitKey, number>, saved: rt.overrides.limits !== undefined },
+        cloudflare,
         policy,
         source: policy.source,
         channels: queues,
@@ -286,6 +296,61 @@ async function saveHost(c: Ctx, action: 'host.save' | 'host.remove', form: FormD
   return 'ok';
 }
 
+const LIST_NAME = 'wicket_banned';
+
+/** The Cloudflare section: what the token can see and what is wired. A few API calls, owner page only. */
+async function cloudflareStatus(c: Ctx, listId: string, savedZoneId: string | undefined): Promise<CloudflareView> {
+  const { env } = c;
+  const token = await verifyToken(env, c.deps.fetch);
+  const view: CloudflareView = {
+    token: token.state,
+    ...(token.state === 'invalid' ? { tokenNote: token.error } : {}),
+    accountId: env.CF_ACCOUNT_ID ?? '',
+    analytics: { ok: false, error: 'not checked' },
+    list: { id: listId, source: listId ? (env.CF_LIST_ID ? 'secret' : 'saved') : 'none' },
+    zone: c.cfg.zone,
+    waf: c.cfg.zone ? 'unknown' : 'no-zone',
+  };
+  if (token.state !== 'active' || !env.CF_ACCOUNT_ID) {
+    view.analytics = { ok: false, error: token.state === 'missing' ? 'CF_API_TOKEN missing' : `token ${token.state}` };
+    return view;
+  }
+  const [analytics, lists] = await Promise.all([analyticsReachable(env, c.deps.fetch, c.cfg.analyticsDataset), listLists(env, c.deps.fetch)]);
+  view.analytics = analytics;
+  const mine = lists?.find((l) => l.id === listId);
+  if (mine) view.list = { ...view.list, name: mine.name, items: mine.items };
+  if (c.cfg.zone && listId) {
+    const zone = savedZoneId ? { ok: true as const, id: savedZoneId } : await findZone(env, c.deps.fetch, c.cfg.zone);
+    view.waf = zone.ok ? await wafRuleState(env, c.deps.fetch, zone.id, mine?.name ?? LIST_NAME) : 'unknown';
+  }
+  return view;
+}
+
+/** `cf.list` creates (or adopts) the IP list; `cf.waf` adds the blocking rule to the zone. Ids are kept in the runtime overrides. */
+async function cloudflareAction(c: Ctx, action: 'cf.list' | 'cf.waf'): Promise<string> {
+  const { env } = c;
+  if (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID) return 'CF_API_TOKEN and CF_ACCOUNT_ID must be set in the secrets first.';
+  const doc = runtimeOverridesOf(await readRuntimeSettings(c.env));
+  if (action === 'cf.list') {
+    const r = await ensureList(env, c.deps.fetch, LIST_NAME);
+    if (!r.ok) return `Could not create the IP list: ${r.error}. The token needs Account → Filter Lists: Edit.`;
+    await writeRuntimeSettings(c.env, { ...doc, cloudflare: { ...(doc.cloudflare ?? {}), listId: r.id } });
+    c.invalidateRuntime();
+    return 'ok';
+  }
+  if (!c.cfg.zone) return 'The zone is not known to this deploy; redeploy with the current wicket.yaml first.';
+  if (!c.cfg.listId) return 'Create the IP list first.';
+  const zone = doc.cloudflare?.zoneId ? { ok: true as const, id: doc.cloudflare.zoneId } : await findZone(env, c.deps.fetch, c.cfg.zone);
+  if (!zone.ok) return `Could not find zone ${c.cfg.zone}: ${zone.error}. The token needs Zone → Zone: Read.`;
+  const lists = await listLists(env, c.deps.fetch);
+  const name = lists?.find((l) => l.id === c.cfg.listId)?.name ?? LIST_NAME;
+  const r = await ensureWafRule(env, c.deps.fetch, zone.id, name);
+  if (!r.ok) return `Could not create the WAF rule: ${r.error}. The token needs Zone → Zone WAF: Edit.`;
+  await writeRuntimeSettings(c.env, { ...doc, cloudflare: { ...(doc.cloudflare ?? {}), zoneId: zone.id } });
+  c.invalidateRuntime();
+  return 'ok';
+}
+
 const lines = (form: FormData | null, name: string): string[] =>
   String(form?.get(name) ?? '')
     .split(/\r?\n|,/)
@@ -334,7 +399,7 @@ async function saveLimits(c: Ctx, form: FormData | null): Promise<string> {
 /** Clears a ban in KV and the IP list and tells the channels; shared by the link and the page. */
 async function unbanAddress(c: Ctx, ip: string, how: string): Promise<void> {
   await clearBan(c.env, ip);
-  const edge = await listRemove(c.env, c.deps.fetch, ip).catch(() => false);
+  const edge = await listRemove(c.env, c.deps.fetch, c.cfg.listId, ip).catch(() => false);
   await emit(c.env, c.deps.fetch, { kind: 'unban', severity: 'info', title: `${c.cfg.siteName}: unbanned ${ip}`, text: `${how}.${edge ? ' Removed from the IP list.' : ''}` }, c.deps.now());
 }
 

@@ -37,6 +37,8 @@ export interface Env {
   HOSTS_JSON?: string;
   /** Mode for routed hosts missing from HOSTS_JSON (wildcard routes): gated | observe | open | off. */
   DEFAULT_MODE?: string;
+  /** The Cloudflare zone the hosts live in (for the Cloudflare section of the settings page). */
+  ZONE?: string;
   COOKIE_DAYS?: string;
   COOKIE_DOMAIN?: string;
   ADMIN_HOSTS?: string;

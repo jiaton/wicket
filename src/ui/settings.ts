@@ -42,6 +42,16 @@ export interface HostRow {
   source: 'config' | 'saved';
 }
 
+export interface CloudflareView {
+  token: 'missing' | 'active' | 'expired' | 'disabled' | 'invalid';
+  tokenNote?: string;
+  accountId: string;
+  analytics: { ok: true; rows: number } | { ok: false; error: string };
+  list: { id: string; name?: string; items?: number; source: 'secret' | 'saved' | 'none' };
+  zone: string;
+  waf: 'present' | 'missing' | 'unknown' | 'no-zone';
+}
+
 export interface SettingsView {
   host: string;
   action: string;
@@ -54,6 +64,7 @@ export interface SettingsView {
   /** True when any runtime override (hosts, access, limits) is saved. */
   runtimeOverridden: boolean;
   access: { allowIps: string[]; allowDns: string[]; trustSeconds: number; bypass: string[]; saved: boolean };
+  cloudflare: CloudflareView;
   limits: { values: Record<LimitKey, number>; saved: boolean };
   policy: NotifyPolicy;
   source: 'defaults' | 'config' | 'saved';
@@ -151,6 +162,7 @@ export function settingsPage(v: SettingsView): string {
         .join('')
     : '<tr><td><small>No hosts configured; every routed host gets the default mode.</small></td></tr>';
 
+  const cf = v.cloudflare;
   const TRUST_CHOICES: [string, string][] = [['0', 'off'], ['3600', '1 hour'], ['21600', '6 hours'], ['86400', '24 hours'], ['604800', '7 days']];
   const trustCurrent = TRUST_CHOICES.some(([s]) => Number(s) === v.access.trustSeconds) ? String(v.access.trustSeconds) : 'custom';
   const trustOptions: [string, string][] = trustCurrent === 'custom' ? [...TRUST_CHOICES, ['custom', `${formatDuration(v.access.trustSeconds)} (from wicket.yaml)`]] : TRUST_CHOICES;
@@ -165,7 +177,7 @@ export function settingsPage(v: SettingsView): string {
     'wicket · settings',
     `<div class="head">${brand('wicket · settings')}<a href="${esc(v.logout)}">Sign out</a></div>
 <p>Signed in as owner on ${esc(v.host)}. Settings apply to every host.</p>
-<nav class="sections"><a href="#hosts">Hosts</a><a href="#access">Access</a><a href="#limits">Limits</a><a href="#notifications">Notifications</a><a href="#bans">Bans</a></nav>
+<nav class="sections"><a href="#hosts">Hosts</a><a href="#access">Access</a><a href="#limits">Limits</a><a href="#cloudflare">Cloudflare</a><a href="#notifications">Notifications</a><a href="#bans">Bans</a></nav>
 
 <h2 id="hosts">Hosts</h2>
 <p><small>Mode, recipe and pass-through per host. Changes are live within 30 s; a host must also be routed to the Worker (its own route in wicket.yaml, or <code>routes: wildcard</code>). Unlisted routed hosts are <b>${esc(v.defaultMode)}</b>.${v.runtimeOverridden ? ' Entries marked <i>saved here</i> override wicket.yaml until removed or reset.' : ''}</small></p>
@@ -191,6 +203,26 @@ ${v.runtimeOverridden ? `<form method="post" action="${esc(v.action)}" class="in
 <table class="limits">${limitRows}</table>
 <div class="row"><button type="submit" name="action" value="limits.save">Save limits</button></div>
 </form>
+
+<h2 id="cloudflare">Cloudflare</h2>
+<p><small>What wicket can reach in your account with <code>CF_API_TOKEN</code>. Edge bans need an IP list and a WAF rule on the zone; both can be created here when the token may (Account: <i>Filter Lists Edit</i>; Zone: <i>Zone Read</i>, <i>WAF Edit</i>). Analytics Engine needs <i>Account Analytics Read</i> and the account switch (<i>Workers &amp; Pages → Analytics Engine</i>).</small></p>
+<table>
+<tr><td><b>API token</b></td><td>${cf.token === 'active' ? 'active' : `<span class="warn">${esc(cf.token)}</span>${cf.tokenNote ? ` <small>${esc(cf.tokenNote)}</small>` : ''}`}</td></tr>
+<tr><td><b>Account</b></td><td>${cf.accountId ? `<code>${esc(cf.accountId.slice(0, 8))}…</code>` : '<span class="warn">CF_ACCOUNT_ID missing</span>'}</td></tr>
+<tr><td><b>Analytics Engine</b><br><small>traffic analysis, alerts, slow-scanner bans</small></td><td>${cf.analytics.ok ? `ok, ${cf.analytics.rows} rows today` : `<span class="warn">not answering</span> <small>${esc(cf.analytics.error)}</small>`}</td></tr>
+<tr><td><b>IP list</b><br><small>bans at the edge, every proxied host</small></td><td>${
+      cf.list.source === 'none'
+        ? `<span class="warn">none</span> <form method="post" action="${esc(v.action)}" class="inline"><button type="submit" name="action" value="cf.list" class="secondary small">Create list wicket_banned</button></form>`
+        : `<code>${esc(cf.list.name ?? cf.list.id.slice(0, 8) + '…')}</code>${cf.list.items !== undefined ? ` · ${cf.list.items} items` : ''} <small>${cf.list.source === 'saved' ? 'created here' : 'CF_LIST_ID'}</small>`
+    }</td></tr>
+<tr><td><b>WAF rule</b><br><small>blocks the list on ${esc(cf.zone || 'your zone')}</small></td><td>${
+      cf.waf === 'present'
+        ? 'present'
+        : cf.waf === 'no-zone'
+          ? '<small>zone unknown (redeploy with the current wicket.yaml)</small>'
+          : `<span class="warn">${cf.waf === 'missing' ? 'missing' : 'unknown'}</span>${cf.list.source !== 'none' ? ` <form method="post" action="${esc(v.action)}" class="inline"><button type="submit" name="action" value="cf.waf" class="secondary small">Create rule</button></form>` : ''}${cf.waf === 'unknown' ? ' <small>the token cannot read zone rulesets</small>' : ''}`
+    }</td></tr>
+</table>
 
 <h2>Status</h2>
 <table>

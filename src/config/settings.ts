@@ -36,6 +36,10 @@ export interface Settings {
   siteName: string;
   analyticsDataset: string;
   reconcileCron: string;
+  /** The zone name from wicket.yaml ('' on old deploys). */
+  zone: string;
+  /** Cloudflare IP list for edge bans: CF_LIST_ID, or the list created from the settings page (runtime override). */
+  listId: string;
 }
 
 export function settings(env: Env): Settings {
@@ -71,5 +75,7 @@ export function settings(env: Env): Settings {
     siteName: env.SITE_NAME ?? 'wicket',
     analyticsDataset: (env.ANALYTICS_DATASET ?? '').match(/^[A-Za-z_][A-Za-z0-9_]*$/) ? env.ANALYTICS_DATASET! : 'wicket_traffic',
     reconcileCron: env.RECONCILE_CRON ?? '17 * * * *',
+    zone: env.ZONE ?? '',
+    listId: env.CF_LIST_ID ?? '',
   };
 }

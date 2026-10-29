@@ -34,7 +34,7 @@ small{color:var(--muted)}select{font:inherit;padding:6px 8px;border:1px solid va
 h2{font-size:15px;margin:22px 0 4px}.head{display:flex;justify-content:space-between;align-items:baseline;gap:12px}.head a{font-size:13px}
 .inline{display:inline}.small{margin:0;padding:6px 10px;width:auto;font-size:13px}code{font-size:13px}
 .pager span{color:var(--muted)}form.row{margin-top:12px;align-items:center}form.row input{flex:1;width:auto}form.row button{flex:none}
-.sections{display:flex;gap:12px;flex-wrap:wrap;font-size:13px;margin:-6px 0 14px}textarea{width:100%;font:13px/1.4 ui-monospace,monospace;padding:8px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;resize:vertical}
+.warn{color:var(--err)}.sections{display:flex;gap:12px;flex-wrap:wrap;font-size:13px;margin:-6px 0 14px}textarea{width:100%;font:13px/1.4 ui-monospace,monospace;padding:8px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;resize:vertical}
 .limits td{font-size:13px}.limits input{width:7em;padding:6px 8px;font-size:13px}
 .hosts td{text-align:left;white-space:normal}.hostrow select{margin:6px 4px 0 0;font-size:13px;max-width:100%}.hostrow .actions{display:inline-flex;gap:6px;margin-left:4px}.hostrow .actions button{margin-top:6px}
 .hostrow.add{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}.hostrow.add input{flex:1 1 200px;width:auto;padding:6px 8px;font-size:13px}.hostrow.add select{margin:0}.hostrow.add button{margin:0}
