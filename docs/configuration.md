@@ -9,6 +9,7 @@ Host modes: `gated` (password page unless a cookie, token or pass-through creden
 ```yaml
 zone: example.com                 # every host must be inside it
 worker: wicket                    # Worker name
+setup: true                       # first-run setup page while no owner password exists (secrets or KV); false = secrets only
 routes: explicit                  # explicit = one route per host below; wildcard = *.example.com/*, unlisted hosts get default_mode
 default_mode: gated               # wildcard routes only: gated | observe | open | off for hosts not listed
 site_name: example.com            # prefix of every notification; default = zone
@@ -65,12 +66,16 @@ cloudflare:
   reconcile_cron: "17 * * * *"     # KV bans ↔ IP list
 ```
 
+## First-run setup and where passwords live
+
+A deploy without an `OWNER_PASSWORD` secret prints a one-time link (`/__wicket/setup?token=…`; the token is a fresh var on every deploy and only matters while no owner password exists). The page sets the owner password and an optional friend password, stored in KV as PBKDF2-SHA256 hashes (40,000 iterations) together with a random cookie secret; it can allow-list the visitor's address and take a Cloudflare API token. Afterwards the page is gone and passwords are changed under *Passwords* on the settings page (changing the owner password signs every browser out). Secrets, when present, take precedence over KV and make the Passwords section read-only. `setup: false` turns the page off for people who want secrets only.
+
 ## Secrets
 
 | Name | Value |
 |---|---|
-| `COOKIE_SECRET` | `openssl rand -hex 32` |
-| `OWNER_PASSWORD` | your password; changing it logs out every browser that used it |
+| `COOKIE_SECRET` | `openssl rand -hex 32`; optional when the setup page is used |
+| `OWNER_PASSWORD` | your password; changing it logs out every browser that used it; optional when the setup page is used |
 | `FRIEND_PASSWORD` | optional second password |
 | `API_TOKENS` | optional, `name:token` comma-separated; `name:token@host1\|host2` restricts hosts |
 | `NOTIFY_JSON` | optional channel list (below); or just `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` |

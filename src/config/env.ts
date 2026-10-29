@@ -39,6 +39,10 @@ export interface Env {
   DEFAULT_MODE?: string;
   /** The Cloudflare zone the hosts live in (for the Cloudflare section of the settings page). */
   ZONE?: string;
+  /** First-run setup page on/off (`setup:` in wicket.yaml); only matters while no owner password exists anywhere. */
+  SETUP_ENABLED?: string;
+  /** One-time token printed at deploy time; required to open /__wicket/setup. */
+  SETUP_TOKEN?: string;
   COOKIE_DAYS?: string;
   COOKIE_DOMAIN?: string;
   ADMIN_HOSTS?: string;

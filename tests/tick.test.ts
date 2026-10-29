@@ -40,7 +40,7 @@ describe('request-path fallback for the cron', () => {
   });
 
   it('does nothing when neither analytics nor channels are configured', async () => {
-    const h = harness();
+    const h = harness({ TELEGRAM_BOT_TOKEN: undefined, TELEGRAM_CHAT_ID: undefined } as never); // a Telegram channel alone would need the digest flush
     await h.run(h.request('/'));
     expect(h.net.sent.filter((s) => s.url.includes('api.cloudflare.com'))).toHaveLength(0);
     expect(await h.kv.get('job:tick')).toBeNull();

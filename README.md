@@ -27,19 +27,16 @@ Needs a Cloudflare zone, a Tunnel with proxied hostnames, Node 22+, and the `cf`
 
 ```sh
 git clone https://github.com/jiaton/wicket && cd wicket && npm install
-cp wicket.example.yaml wicket.yaml        # 1. edit zone, hosts, allow_ips (every key is commented)
-cat > secrets.json <<EOF                  # 2. secrets (git-ignored, like wicket.yaml)
-{ "COOKIE_SECRET": "$(openssl rand -hex 32)", "OWNER_PASSWORD": "change-me",
-  "TELEGRAM_BOT_TOKEN": "123:abc", "TELEGRAM_CHAT_ID": "42" }
-EOF
-npm run check                             # 3. validates wicket.yaml, uploads nothing
-cf deploy --secrets-file secrets.json     # 4. deploy (wrangler: npm run config:wrangler && npx wrangler deploy && npx wrangler secret bulk secrets.json)
-curl -sI https://nas.example.com/__wicket/login | head -1   # 200 = live, 503 = secrets missing
+printf 'zone: example.com\nroutes: wildcard\n' > wicket.yaml   # 1. the only two lines you need (wicket.example.yaml documents the rest)
+npm run check                                              # 2. validates it, uploads nothing
+cf deploy                                                  # 3. deploy; prints a one-time setup link (wrangler: npm run config:wrangler && npx wrangler deploy)
 ```
 
-Then connect your Cloudflare account: create an API token (Account → *Analytics: Read*, *Filter Lists: Edit*; Zone → *Zone: Read*, *WAF: Edit*), put it and your account id in the secrets as `CF_API_TOKEN` / `CF_ACCOUNT_ID`, redeploy, and open the **Cloudflare** section of `/__wicket/settings`: it checks the token, tells you if Analytics Engine still needs its one-time switch in the dashboard (*Workers & Pages → Analytics Engine*), and creates the IP list and the WAF rule for edge bans with one click each. Make your reverse proxy trust `Cf-Connecting-Ip`.
+4. Open the setup link: choose the owner password (and a friend password), keep your current address allow-listed, optionally paste a Cloudflare API token. You land on the settings page, where everything else lives: which hostnames are gated, observed, open or off; allow lists; limits; notifications. `routes: wildcard` routes every proxied subdomain through wicket, so adding a host is a form, not a deploy. Prefer explicit routes and secrets? List `hosts:` in `wicket.yaml`, put `OWNER_PASSWORD` and `COOKIE_SECRET` in a `secrets.json` and deploy with `cf deploy --secrets-file secrets.json`; the setup page then never appears (`setup: false` disables it outright).
 
-> Never run `cf deploy` without `--secrets-file` (cf 1.0 beta uploads a version with no secrets; `npm run deploy` refuses for that reason). The KV namespace is created on the first deploy.
+Then connect your Cloudflare account: create an API token (Account → *Analytics: Read*, *Filter Lists: Edit*; Zone → *Zone: Read*, *WAF: Edit*), paste it with your account id into the **Cloudflare** section of `/__wicket/settings` (or set `CF_API_TOKEN` / `CF_ACCOUNT_ID` as secrets): it checks the token, tells you if Analytics Engine still needs its one-time switch in the dashboard (*Workers & Pages → Analytics Engine*), and creates the IP list and the WAF rule for edge bans with one click each. Make your reverse proxy trust `Cf-Connecting-Ip`.
+
+> If you use secrets, never run `cf deploy` without `--secrets-file` afterwards (cf 1.0 beta uploads a version with no secrets; `npm run deploy` refuses for that reason). Passwords set on the setup page live in KV and survive every deploy. The KV namespace is created on the first deploy.
 
 **No CLI?** Fork, then *Workers & Pages → Create → Continue with GitHub*: build command `npm run config:wrangler`, deploy command `npx wrangler deploy`, build variable `WICKET_YAML` = your `wicket.yaml` (text or base64). Add the secrets under the Worker's *Settings → Variables and Secrets*. *Sync fork* ships updates.
 

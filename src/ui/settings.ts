@@ -44,6 +44,7 @@ export interface HostRow {
 
 export interface CloudflareView {
   token: 'missing' | 'active' | 'expired' | 'disabled' | 'invalid';
+  tokenSource: 'secret' | 'kv' | 'none';
   tokenNote?: string;
   accountId: string;
   analytics: { ok: true; rows: number } | { ok: false; error: string };
@@ -65,6 +66,9 @@ export interface SettingsView {
   runtimeOverridden: boolean;
   access: { allowIps: string[]; allowDns: string[]; trustSeconds: number; bypass: string[]; saved: boolean };
   cloudflare: CloudflareView;
+  /** Where the passwords live: `secrets` (read-only here) or `kv` (changeable here). */
+  passwords: 'secrets' | 'kv';
+  hasFriend: boolean;
   limits: { values: Record<LimitKey, number>; saved: boolean };
   policy: NotifyPolicy;
   source: 'defaults' | 'config' | 'saved';
@@ -177,7 +181,7 @@ export function settingsPage(v: SettingsView): string {
     'wicket · settings',
     `<div class="head">${brand('wicket · settings')}<a href="${esc(v.logout)}">Sign out</a></div>
 <p>Signed in as owner on ${esc(v.host)}. Settings apply to every host.</p>
-<nav class="sections"><a href="#hosts">Hosts</a><a href="#access">Access</a><a href="#limits">Limits</a><a href="#cloudflare">Cloudflare</a><a href="#notifications">Notifications</a><a href="#bans">Bans</a></nav>
+<nav class="sections"><a href="#hosts">Hosts</a><a href="#access">Access</a><a href="#limits">Limits</a><a href="#passwords">Passwords</a><a href="#cloudflare">Cloudflare</a><a href="#notifications">Notifications</a><a href="#bans">Bans</a></nav>
 
 <h2 id="hosts">Hosts</h2>
 <p><small>Mode, recipe and pass-through per host. Changes are live within 30 s; a host must also be routed to the Worker (its own route in wicket.yaml, or <code>routes: wildcard</code>). Unlisted routed hosts are <b>${esc(v.defaultMode)}</b>.${v.runtimeOverridden ? ' Entries marked <i>saved here</i> override wicket.yaml until removed or reset.' : ''}</small></p>
@@ -204,10 +208,30 @@ ${v.runtimeOverridden ? `<form method="post" action="${esc(v.action)}" class="in
 <div class="row"><button type="submit" name="action" value="limits.save">Save limits</button></div>
 </form>
 
+<h2 id="passwords">Passwords</h2>
+${
+  v.passwords === 'secrets'
+    ? `<p><small>Set as secrets at deploy time (<code>OWNER_PASSWORD</code>, <code>FRIEND_PASSWORD</code>); change them there and redeploy. Changing a password signs out every browser that used it.</small></p>`
+    : `<p><small>Set on the setup page and kept in KV (hashed). Changing a password signs out every browser that used it, including this one for the owner password.${v.hasFriend ? '' : ' No friend password yet.'}</small></p>
+<form method="post" action="${esc(v.action)}">
+<table>
+<tr><td><b>Current owner password</b></td><td><input name="current" type="password" required autocomplete="current-password" style="width:14em"></td></tr>
+<tr><td><b>New owner password</b><br><small>leave empty to keep</small></td><td><input name="owner" type="password" minlength="12" autocomplete="new-password" style="width:14em"></td></tr>
+<tr><td><b>Friend password</b><br><small>leave empty to keep; <code>-</code> removes it</small></td><td><input name="friend" type="password" autocomplete="new-password" style="width:14em"></td></tr>
+</table>
+<div class="row"><button type="submit" name="action" value="auth.password">Change passwords</button></div>
+</form>`
+}
+
 <h2 id="cloudflare">Cloudflare</h2>
 <p><small>What wicket can reach in your account with <code>CF_API_TOKEN</code>. Edge bans need an IP list and a WAF rule on the zone; both can be created here when the token may (Account: <i>Filter Lists Edit</i>; Zone: <i>Zone Read</i>, <i>WAF Edit</i>). Analytics Engine needs <i>Account Analytics Read</i> and the account switch (<i>Workers &amp; Pages → Analytics Engine</i>).</small></p>
 <table>
-<tr><td><b>API token</b></td><td>${cf.token === 'active' ? 'active' : `<span class="warn">${esc(cf.token)}</span>${cf.tokenNote ? ` <small>${esc(cf.tokenNote)}</small>` : ''}`}</td></tr>
+<tr><td><b>API token</b>${cf.tokenSource === 'kv' ? '<br><small>given here, kept in KV</small>' : ''}</td><td>${cf.token === 'active' ? 'active' : `<span class="warn">${esc(cf.token)}</span>${cf.tokenNote ? ` <small>${esc(cf.tokenNote)}</small>` : ''}`}</td></tr>
+${
+  cf.tokenSource === 'secret'
+    ? ''
+    : `<tr><td colspan="2"><form method="post" action="${esc(v.action)}" class="hostrow add"><input name="cfToken" type="password" placeholder="API token" autocomplete="off" aria-label="Cloudflare API token"><input name="cfAccount" placeholder="account id (32 hex)" pattern="[0-9a-f]{32}" aria-label="Cloudflare account id" value="${esc(cf.accountId)}"><button type="submit" name="action" value="cf.creds" class="small">${cf.tokenSource === 'kv' ? 'Replace token' : 'Save token'}</button></form></td></tr>`
+}
 <tr><td><b>Account</b></td><td>${cf.accountId ? `<code>${esc(cf.accountId.slice(0, 8))}…</code>` : '<span class="warn">CF_ACCOUNT_ID missing</span>'}</td></tr>
 <tr><td><b>Analytics Engine</b><br><small>traffic analysis, alerts, slow-scanner bans</small></td><td>${cf.analytics.ok ? `ok, ${cf.analytics.rows} rows today` : `<span class="warn">not answering</span> <small>${esc(cf.analytics.error)}</small>`}</td></tr>
 <tr><td><b>IP list</b><br><small>bans at the edge, every proxied host</small></td><td>${

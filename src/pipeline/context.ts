@@ -1,4 +1,5 @@
 import type { Env } from '../config/env';
+import type { Auth } from '../runtime';
 import type { HostConfig } from '../config/hosts';
 import type { Settings } from '../config/settings';
 import type { RecentSet, SlidingCounter } from '../core/counters';
@@ -42,8 +43,13 @@ export interface Ctx {
   ip: string;
   /** Country code of the visitor. */
   cc: string;
+  /** The effective env: bindings and secrets, with KV-stored credentials merged in where the secrets are absent. */
   env: Env;
+  /** The Worker's own env, untouched (to tell a secret from a KV-stored value). */
+  rawEnv: Env;
   cfg: Settings;
+  /** Owner/friend password material and the cookie secret, from the secrets or from KV (setup page). */
+  auth: Auth;
   host: HostConfig;
   deps: Deps;
   exec: ExecutionContext;

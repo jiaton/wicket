@@ -1,5 +1,5 @@
 import type { Env } from '../config/env';
-import { settings } from '../config/settings';
+import { resolveRuntime } from '../runtime';
 import { flushQueues, type Fetch } from '../notify';
 import { backfillBanMetadata } from '../store/bans';
 import { acquireJobLock } from '../store/locks';
@@ -10,14 +10,17 @@ export const TICK_SECONDS = 300;
 export const RECONCILE_SECONDS = 3600;
 
 /** The five-minute job: failed IP-list calls retried, traffic alerts, then the batched notification digests. */
-export async function fiveMinuteJob(env: Env, doFetch: Fetch, now: number): Promise<void> {
+export async function fiveMinuteJob(rawEnv: Env, doFetch: Fetch, now: number): Promise<void> {
+  const rt = await resolveRuntime(rawEnv);
+  const env = rt.env;
   await repairEdge(env, doFetch);
   await runAnalysis(env, doFetch, now);
-  await flushQueues(env, doFetch, settings(env).siteName, now);
+  await flushQueues(env, doFetch, rt.settings.siteName, now);
 }
 
 /** The hourly job. */
-export async function hourlyJob(env: Env, doFetch: Fetch, now: number): Promise<void> {
+export async function hourlyJob(rawEnv: Env, doFetch: Fetch, now: number): Promise<void> {
+  const env = (await resolveRuntime(rawEnv)).env;
   await backfillBanMetadata(env);
   await reconcile(env, doFetch, now);
 }
@@ -41,7 +44,7 @@ export async function runOnce(env: Env, name: 'tick' | 'reconcile', windowSecond
 }
 
 /** True when the periodic jobs have anything to do (analytics alerts or batched channels). */
-const jobsConfigured = (env: Env) => Boolean((env.CF_API_TOKEN && env.CF_ACCOUNT_ID) || env.NOTIFY_JSON);
+const jobsConfigured = (env: Env) => Boolean((env.CF_API_TOKEN && env.CF_ACCOUNT_ID) || env.NOTIFY_JSON || env.TELEGRAM_BOT_TOKEN);
 
 /**
  * Request-path fallback for the cron. Cloudflare's cron delivery has been seen to stay silent
@@ -53,16 +56,18 @@ const jobsConfigured = (env: Env) => Boolean((env.CF_API_TOKEN && env.CF_ACCOUNT
 export function createFallbackTick(deps: { fetch: Fetch; now: () => number }) {
   let nextTick = 0;
   let nextReconcile = 0;
+  // The Cloudflare token may live in KV (given on the settings page), so the "anything to do?"
+  // question is answered against the effective env; the three reads happen once per window.
+  const configured = async (env: Env): Promise<boolean> => jobsConfigured(env) || jobsConfigured((await resolveRuntime(env)).env);
   return (env: Env, exec: ExecutionContext): void => {
-    if (!jobsConfigured(env)) return;
     const now = deps.now();
     if (now >= nextTick) {
       nextTick = now + TICK_SECONDS * 1000;
-      exec.waitUntil(runOnce(env, 'tick', TICK_SECONDS, () => fiveMinuteJob(env, deps.fetch, now)));
+      exec.waitUntil(configured(env).then((on) => (on ? runOnce(env, 'tick', TICK_SECONDS, () => fiveMinuteJob(env, deps.fetch, now)) : false)));
     }
     if (now >= nextReconcile) {
       nextReconcile = now + RECONCILE_SECONDS * 1000;
-      exec.waitUntil(runOnce(env, 'reconcile', RECONCILE_SECONDS, () => hourlyJob(env, deps.fetch, now)));
+      exec.waitUntil(configured(env).then((on) => (on ? runOnce(env, 'reconcile', RECONCILE_SECONDS, () => hourlyJob(env, deps.fetch, now)) : false)));
     }
   };
 }

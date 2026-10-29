@@ -26,6 +26,8 @@ zone: example.com
 #   open     forwarded untouched (bans still apply); off: a maintenance page, nothing forwarded.
 # Hosts can also be added or changed on /__wicket/settings without a redeploy.
 #
+# setup: true             # first-run setup page (passwords chosen in the browser, kept in KV) while
+#                         # no OWNER_PASSWORD secret exists; false = secrets only
 # routes: explicit        # one Workers route per host below (default)
 # routes: wildcard        # one route *.example.com/*; hosts not listed get default_mode
 # default_mode: gated     # wildcard only: gated | observe | open | off

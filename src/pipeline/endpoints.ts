@@ -14,7 +14,9 @@ import { resolveRuntime } from '../runtime';
 import { analyticsReachable, ensureList, ensureWafRule, findZone, listLists, verifyToken, wafRuleState } from '../cloudflare/setup';
 import type { CloudflareView } from '../ui/settings';
 import { isTrusted, markTrusted } from '../store/trust';
-import { loginPage, messagePage } from '../ui/pages';
+import { loginPage, messagePage, setupPage } from '../ui/pages';
+import { hashPassword, randomSecret, verifyPassword } from '../core/password';
+import { readAuth, writeAuth, writeCloudflareCreds } from '../store/auth';
 import { settingsPage, type BanRow, type HostRow } from '../ui/settings';
 import type { Ctx, Result } from './context';
 import { failClosed, registerFailure } from './failures';
@@ -36,6 +38,7 @@ export async function endpoints(c: Ctx): Promise<Result | null> {
   }
   if (route === 'login' && c.req.method === 'POST') return login(c);
   if (route === 'settings') return settings(c);
+  if (route === 'setup') return setup(c);
   if (route === 'login') {
     return [html(loginPage({ host: c.url.hostname, action: LOGIN_ACTION, next: safeNext(c.url.searchParams.get('next')) }), 200), 'reject'];
   }
@@ -65,17 +68,14 @@ async function login(c: Ctx): Promise<Result> {
   // No honeypot field: browsers autofill hidden inputs no matter what they are called
   // (seen with "email" and "website"), and a human rejected that way looks like a brute-forcer.
 
-  // Fail closed: with the secret missing (e.g. a deploy that dropped secrets), comparing
-  // against `undefined` would otherwise accept the literal password "undefined".
-  if (!env.OWNER_PASSWORD || !env.COOKIE_SECRET) {
-    return [html(messagePage('Unavailable', 'Password entry is disabled: the Worker has no secrets configured.'), 503), 'reject'];
+  // Fail closed: with no owner password anywhere (a deploy that dropped its secrets, or setup not
+  // done yet), comparing against `undefined` would otherwise accept the literal password "undefined".
+  if (c.auth.kind === 'none' || !c.auth.owner || !c.auth.cookieSecret) {
+    const hint = c.auth.setupOpen ? 'This Worker has not been set up yet: open the setup link printed when it was deployed.' : 'Password entry is disabled: the Worker has no secrets configured.';
+    return [html(messagePage('Unavailable', hint), 503), 'reject'];
   }
 
-  let role: Role | null = null;
-  if (password) {
-    if (safeEqual(password, env.OWNER_PASSWORD)) role = 'owner';
-    else if (env.FRIEND_PASSWORD && safeEqual(password, env.FRIEND_PASSWORD)) role = 'friend';
-  }
+  const role = password ? await matchPassword(c, password) : null;
   if (!role) {
     console.warn('login rejected', url.hostname, ip, allowed ? 'allow-listed, not counted' : 'counted');
     if (allowed) return [html(loginPage({ host: url.hostname, action: LOGIN_ACTION, next, error: 'Wrong password.' }), 401), 'reject'];
@@ -85,7 +85,7 @@ async function login(c: Ctx): Promise<Result> {
   c.exec.waitUntil(clearFailures(env, ip));
   if (role === 'owner') c.exec.waitUntil(markTrusted(env, ip, cfg.trustSeconds));
   const issuedAt = Math.floor(c.deps.now() / 1000);
-  const value = await signSession(env.COOKIE_SECRET, role === 'owner' ? env.OWNER_PASSWORD : env.FRIEND_PASSWORD!, role, issuedAt);
+  const value = await signSession(c.auth.cookieSecret, (role === 'owner' ? c.auth.owner : c.auth.friend)!, role, issuedAt);
   return [
     new Response(null, {
       status: 303,
@@ -97,14 +97,91 @@ async function login(c: Ctx): Promise<Result> {
 
 /** Role of the session cookie on this request, if any. */
 async function sessionRole(c: Ctx): Promise<Role | null> {
-  const s = await verifySession(
-    cookieValue(c.req),
-    c.env.COOKIE_SECRET,
-    { owner: c.env.OWNER_PASSWORD, friend: c.env.FRIEND_PASSWORD },
-    Math.floor(c.deps.now() / 1000),
-    c.cfg.cookieSeconds,
-  );
+  const s = await verifySession(cookieValue(c.req), c.auth.cookieSecret, { owner: c.auth.owner ?? undefined, friend: c.auth.friend ?? undefined }, Math.floor(c.deps.now() / 1000), c.cfg.cookieSeconds);
   return s?.role ?? null;
+}
+
+/** Which role a typed password belongs to: constant-time compare against the secrets, or PBKDF2 against the KV hashes. */
+async function matchPassword(c: Ctx, password: string): Promise<Role | null> {
+  if (c.auth.kind === 'plain') {
+    if (c.auth.owner && safeEqual(password, c.auth.owner)) return 'owner';
+    if (c.auth.friend && safeEqual(password, c.auth.friend)) return 'friend';
+    return null;
+  }
+  if (c.auth.kind === 'hash') {
+    if (c.auth.owner && (await verifyPassword(password, c.auth.owner))) return 'owner';
+    if (c.auth.friend && (await verifyPassword(password, c.auth.friend))) return 'friend';
+  }
+  return null;
+}
+
+const SETUP_PATH = `${ENDPOINT_PREFIX}setup`;
+const MIN_PASSWORD = 12;
+
+/**
+ * /__wicket/setup — first run, when no owner password exists in the secrets or in KV. Needs
+ * the one-time token printed at deploy time (constant-time compare), so a stranger who finds
+ * a fresh Worker cannot claim it. Writes the password hashes and a cookie secret to KV, allow-
+ * lists the visitor's address if asked, stores a Cloudflare token if given, signs the owner
+ * in and sends them to the settings page. Gone for good once an owner password exists.
+ */
+async function setup(c: Ctx): Promise<Result> {
+  if (!c.auth.setupOpen) return [html(messagePage('Not found', ''), 404), 'reject'];
+  const token = String((c.req.method === 'POST' ? (await c.req.clone().formData().catch(() => null))?.get('token') : c.url.searchParams.get('token')) ?? '');
+  if (!c.env.SETUP_TOKEN || !safeEqual(token, c.env.SETUP_TOKEN)) {
+    return [html(messagePage('Setup', 'This page needs the setup link printed when the Worker was deployed.'), 403), 'reject'];
+  }
+  const view = { host: c.url.hostname, action: SETUP_PATH, token, ip: c.ip, cloudflare: Boolean(c.env.CF_API_TOKEN) };
+  if (c.req.method !== 'POST') return [html(setupPage(view), 200, { 'cache-control': 'no-store' }), 'reject'];
+  if (!sameOrigin(c.req)) return [html(messagePage('Rejected', 'Cross-site request.'), 403), 'reject'];
+  const form = await c.req.formData().catch(() => null);
+  const password = String(form?.get('password') ?? '');
+  const friend = String(form?.get('friend') ?? '');
+  const fail = (error: string): Result => [html(setupPage({ ...view, error }), 400), 'reject'];
+  if (password.length < MIN_PASSWORD) return fail(`The owner password needs at least ${MIN_PASSWORD} characters.`);
+  if (password !== String(form?.get('password2') ?? '')) return fail('The two owner passwords differ.');
+  if (friend && friend === password) return fail('The friend password must differ from the owner password.');
+  const cfToken = String(form?.get('cfToken') ?? '').trim();
+  const cfAccount = String(form?.get('cfAccount') ?? '').trim().toLowerCase();
+  if (cfToken && !/^[0-9a-f]{32}$/.test(cfAccount)) return fail('The Cloudflare account id is 32 hex characters (dashboard → Workers & Pages → right column).');
+  // Re-check under the lock-free assumption that two setups racing is harmless: last writer wins, both knew the token.
+  if (await readAuth(c.env)) return [html(messagePage('Already set up', 'An owner password exists; sign in instead.'), 409), 'reject'];
+  const cookieSecret = randomSecret();
+  const ownerHash = await hashPassword(password);
+  const friendHash = friend ? await hashPassword(friend) : undefined;
+  await writeAuth(c.env, { owner: ownerHash, ...(friendHash ? { friend: friendHash } : {}), cookieSecret, at: c.deps.now() });
+  if (cfToken) await writeCloudflareCreds(c.env, { token: cfToken, accountId: cfAccount });
+  if (form?.get('allow') === '1' && c.ip && c.ip !== '0.0.0.0') {
+    const doc = runtimeOverridesOf(await readRuntimeSettings(c.env));
+    const allowIps = [...new Set([...(doc.access?.allowIps ?? c.cfg.allowIps), c.ip])];
+    await writeRuntimeSettings(c.env, { ...doc, access: { allowIps, allowDns: doc.access?.allowDns ?? c.cfg.allowDns, trustSeconds: doc.access?.trustSeconds ?? c.cfg.trustSeconds, bypass: doc.access?.bypass ?? c.cfg.bypass.map((b) => `${b.host}${b.prefix}`) } });
+  }
+  c.invalidateRuntime();
+  c.exec.waitUntil(markTrusted(c.env, c.ip, c.cfg.trustSeconds));
+  const value = await signSession(cookieSecret, ownerHash, 'owner', Math.floor(c.deps.now() / 1000));
+  return [
+    new Response(null, { status: 303, headers: { location: `${c.url.origin}${SETTINGS_PATH}?ok=setup`, 'set-cookie': setCookie(value, c.cfg, c.cfg.cookieSeconds), 'cache-control': 'no-store' } }),
+    'login',
+  ];
+}
+
+/** Settings page: change the KV-stored passwords (owner must retype the current one). */
+async function changePasswords(c: Ctx, form: FormData | null): Promise<string> {
+  if (c.auth.kind !== 'hash') return 'Passwords are set in the secrets; change them there and redeploy.';
+  const stored = await readAuth(c.env);
+  if (!stored) return 'No stored passwords found.';
+  if (!(await verifyPassword(String(form?.get('current') ?? ''), stored.owner))) return 'The current owner password is wrong.';
+  const owner = String(form?.get('owner') ?? '');
+  const friend = String(form?.get('friend') ?? '');
+  if (owner && owner.length < MIN_PASSWORD) return `The owner password needs at least ${MIN_PASSWORD} characters.`;
+  if (friend && friend !== '-' && friend === owner) return 'The friend password must differ from the owner password.';
+  const next = { ...stored, at: c.deps.now() };
+  if (owner) next.owner = await hashPassword(owner);
+  if (friend === '-') delete next.friend;
+  else if (friend) next.friend = await hashPassword(friend);
+  await writeAuth(c.env, next);
+  c.invalidateRuntime();
+  return 'ok';
 }
 
 /**
@@ -149,6 +226,18 @@ async function settings(c: Ctx): Promise<Result> {
       const result = action === 'access.save' ? await saveAccess(c, form) : await saveLimits(c, form);
       if (result !== 'ok') return [html(messagePage('Not saved', result), 400), 'admin'];
       notice = action === 'access.save' ? 'access-saved' : 'limits-saved';
+    } else if (action === 'auth.password') {
+      const result = await changePasswords(c, form);
+      if (result !== 'ok') return [html(messagePage('Not changed', result), 400), 'admin'];
+      notice = 'password';
+    } else if (action === 'cf.creds') {
+      const token = String(form?.get('cfToken') ?? '').trim();
+      const accountId = String(form?.get('cfAccount') ?? '').trim().toLowerCase();
+      if (!token || !/^[0-9a-f]{32}$/.test(accountId)) return [html(messagePage('Not saved', 'A token and a 32-character account id are needed.'), 400), 'admin'];
+      if (c.env.CF_API_TOKEN && !(await readAuth(c.env))) return [html(messagePage('Not saved', 'CF_API_TOKEN is set in the secrets and takes precedence.'), 400), 'admin'];
+      await writeCloudflareCreds(c.env, { token, accountId });
+      c.invalidateRuntime();
+      notice = 'cf-creds';
     } else if (action === 'cf.list' || action === 'cf.waf') {
       const result = await cloudflareAction(c, action);
       if (result !== 'ok') return [html(messagePage('Cloudflare', result), 400), 'admin'];
@@ -210,6 +299,9 @@ async function settings(c: Ctx): Promise<Result> {
     'access-saved': 'Access settings saved. Live on every data centre within 30 s.',
     'limits-saved': 'Limits saved. Live on every data centre within 30 s.',
     'cf-list': 'IP list ready. Bans are added to it from now on.',
+    'cf-creds': 'Cloudflare token saved.',
+    password: 'Passwords changed. Browsers that used the old owner password are signed out.',
+    setup: 'Welcome. wicket is set up; this address is allow-listed and signed in as owner.',
     'cf-waf': 'WAF rule ready. Listed addresses are blocked at the edge on every proxied host.',
   };
   const notice = ok ? NOTICES[ok] : undefined;
@@ -233,6 +325,8 @@ async function settings(c: Ctx): Promise<Result> {
         },
         limits: { values: Object.fromEntries(LIMIT_KEYS.map((k) => [k, rt.settings[k]])) as Record<LimitKey, number>, saved: rt.overrides.limits !== undefined },
         cloudflare,
+        passwords: c.auth.kind === 'plain' ? 'secrets' : 'kv',
+        hasFriend: Boolean(c.auth.friend),
         policy,
         source: policy.source,
         channels: queues,
@@ -298,12 +392,16 @@ async function saveHost(c: Ctx, action: 'host.save' | 'host.remove', form: FormD
 
 const LIST_NAME = 'wicket_banned';
 
+/** c.env is the effective env; the secrets' own token is what the raw Worker env carries. */
+const rawTokenInSecrets = (c: Ctx): boolean => Boolean(c.rawEnv.CF_API_TOKEN);
+
 /** The Cloudflare section: what the token can see and what is wired. A few API calls, owner page only. */
 async function cloudflareStatus(c: Ctx, listId: string, savedZoneId: string | undefined): Promise<CloudflareView> {
   const { env } = c;
   const token = await verifyToken(env, c.deps.fetch);
   const view: CloudflareView = {
     token: token.state,
+    tokenSource: !env.CF_API_TOKEN ? 'none' : rawTokenInSecrets(c) ? 'secret' : 'kv',
     ...(token.state === 'invalid' ? { tokenNote: token.error } : {}),
     accountId: env.CF_ACCOUNT_ID ?? '',
     analytics: { ok: false, error: 'not checked' },
@@ -411,13 +509,13 @@ async function liftLockdownAndTell(c: Ctx, how: string): Promise<void> {
 /** The signed link from a notification: lifts one address's ban, or the lockdown when `ip=*`. */
 async function unban(c: Ctx): Promise<Result> {
   const { env, cfg, url } = c;
-  if (!env.COOKIE_SECRET) return [html(messagePage('Unavailable', 'The Worker has no secrets configured.'), 503), 'reject'];
+  if (!c.auth.cookieSecret) return [html(messagePage('Unavailable', 'The Worker has no secrets configured.'), 503), 'reject'];
   const ip = url.searchParams.get('ip') ?? '';
   const exp = Number(url.searchParams.get('exp'));
   const at = Number(url.searchParams.get('at'));
   const sig = url.searchParams.get('sig') ?? '';
   const now = Math.floor(c.deps.now() / 1000);
-  if (!ip || !Number.isFinite(exp) || !Number.isFinite(at) || exp < now || !safeEqual(sig, await signUnban(env.COOKIE_SECRET, ip, exp, at))) {
+  if (!ip || !Number.isFinite(exp) || !Number.isFinite(at) || exp < now || !safeEqual(sig, await signUnban(c.auth.cookieSecret, ip, exp, at))) {
     return [html(messagePage('Invalid link', 'This unban link is invalid or has expired.'), 400), 'reject'];
   }
   // The link lifts the ban it was sent for, once: a later ban of the same address needs its own link.

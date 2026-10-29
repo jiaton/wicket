@@ -39,7 +39,7 @@ h2{font-size:15px;margin:22px 0 4px}.head{display:flex;justify-content:space-bet
 .hosts td{text-align:left;white-space:normal}.hostrow select{margin:6px 4px 0 0;font-size:13px;max-width:100%}.hostrow .actions{display:inline-flex;gap:6px;margin-left:4px}.hostrow .actions button{margin-top:6px}
 .hostrow.add{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}.hostrow.add input{flex:1 1 200px;width:auto;padding:6px 8px;font-size:13px}.hostrow.add select{margin:0}.hostrow.add button{margin:0}
 h1{font-size:18px;margin:0 0 4px}p{margin:0 0 16px;color:var(--muted);font-size:14px}
-label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+label{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px}label.check{display:flex;gap:8px;align-items:center;color:var(--fg)}label.check input{width:auto}
 input{width:100%;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit}
 input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
 button{margin-top:14px;width:100%;font:inherit;font-weight:600;padding:10px;border:0;border-radius:8px;background:var(--accent);color:#fff;cursor:pointer}
@@ -59,6 +59,35 @@ export function loginPage(opts: { host: string; action: string; next: string; er
 <label for="pw">Password</label><input id="pw" name="password" type="password" required autofocus autocomplete="current-password">
 <button type="submit">Enter</button>
 ${opts.error ? `<p class="err" role="alert">${esc(opts.error)}${esc(hint)}</p>` : ''}
+</form>`,
+  );
+}
+
+export interface SetupView {
+  host: string;
+  action: string;
+  token: string;
+  /** The visitor's address, offered for the allow list. */
+  ip: string;
+  cloudflare: boolean;
+  error?: string;
+}
+
+/** First-run page: owner password, optional friend password, optional Cloudflare token; opened once with the deploy-time token. */
+export function setupPage(v: SetupView): string {
+  return shell(
+    'wicket · setup',
+    `${brand()}<h1>Set up wicket</h1><p>This Worker has no owner password yet. Choose one now; it opens every gated host under this domain.</p>
+<form method="post" action="${esc(v.action)}" autocomplete="off">
+<input type="hidden" name="token" value="${esc(v.token)}">
+<label for="pw">Owner password (12+ characters)</label><input id="pw" name="password" type="password" required minlength="12" autofocus autocomplete="new-password">
+<label for="pw2">Repeat it</label><input id="pw2" name="password2" type="password" required minlength="12" autocomplete="new-password">
+<label for="fpw">Friend password (optional, for people you share a host with)</label><input id="fpw" name="friend" type="password" autocomplete="new-password">
+<label class="check"><input type="checkbox" name="allow" value="1" checked> Never ask my current address (<code>${esc(v.ip)}</code>) for a password</label>
+${v.cloudflare ? '' : `<label for="cft">Cloudflare API token (optional, for edge bans and traffic analysis; can be added later)</label><input id="cft" name="cfToken" type="password" autocomplete="off">
+<label for="cfa">Cloudflare account id</label><input id="cfa" name="cfAccount" pattern="[0-9a-f]{32}">`}
+<button type="submit">Create</button>
+${v.error ? `<p class="err" role="alert">${esc(v.error)}</p>` : ''}
 </form>`,
   );
 }

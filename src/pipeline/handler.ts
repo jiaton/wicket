@@ -92,13 +92,8 @@ export const STEPS: Step[] = [
   //     browser whose front end sends `X-Api-Key` to a host without a pass-through rule is a
   //     user, not a guesser.
   async (c) => {
-    const session = await verifySession(
-      cookieValue(c.req),
-      c.env.COOKIE_SECRET,
-      { owner: c.env.OWNER_PASSWORD, friend: c.env.FRIEND_PASSWORD },
-      Math.floor(c.deps.now() / 1000),
-      c.cfg.cookieSeconds,
-    );
+    if (!c.auth.cookieSecret) return null;
+    const session = await verifySession(cookieValue(c.req), c.auth.cookieSecret, { owner: c.auth.owner ?? undefined, friend: c.auth.friend ?? undefined }, Math.floor(c.deps.now() / 1000), c.cfg.cookieSeconds);
     if (!session) return null;
     if (session.role === 'owner') c.trust();
     return passthrough(c, 'pass');
@@ -142,12 +137,13 @@ export function createHandler(deps: Deps) {
   const fallbackTick = createFallbackTick(deps);
   const runtime = createRuntimeCache(deps.now);
 
-  return async function fetchHandler(req: Request, env: Env, exec: ExecutionContext): Promise<Response> {
+  return async function fetchHandler(req: Request, rawEnv: Env, exec: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     const started = deps.now();
     // IPv6 visitors are counted, banned and trusted by their /64 (see core/ip.ts).
     const ip = addressKey(clientIp(req));
-    const rt = await runtime.get(env);
+    const rt = await runtime.get(rawEnv);
+    const env = rt.env;
     const cfg = rt.settings;
     const c: Ctx = {
       req,
@@ -155,7 +151,9 @@ export function createHandler(deps: Deps) {
       ip,
       cc: country(req),
       env,
+      rawEnv,
       cfg,
+      auth: rt.auth,
       host: hostOf(env, rt, url.hostname),
       deps,
       exec,

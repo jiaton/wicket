@@ -42,6 +42,8 @@ export interface WicketConfig {
   /** `explicit`: one Workers route per listed host. `wildcard`: one route `*.zone/*`, unlisted hosts get `defaultMode`. */
   routes: 'explicit' | 'wildcard';
   defaultMode: HostMode;
+  /** First-run setup page (passwords set in the browser) while no OWNER_PASSWORD secret exists. */
+  setup: boolean;
   allowIps: string[];
   allowDns: string[];
   /** Seconds an address stays trusted after an owner login (0 = off). */
@@ -248,6 +250,7 @@ export function parseConfig(doc: unknown, recipes: ReadonlySet<string> | null = 
     hosts,
     routes,
     defaultMode,
+    setup: doc.setup === undefined || doc.setup === null ? true : doc.setup === true,
     allowIps: strings(doc.allow_ips, 'allow_ips'),
     allowDns: strings(doc.allow_dns, 'allow_dns').map((n) => {
       const name = n.toLowerCase();
@@ -383,6 +386,7 @@ export function toVars(cfg: WicketConfig): Record<string, string> {
     HOSTS_JSON: JSON.stringify(hostsJson),
     DEFAULT_MODE: cfg.defaultMode,
     ZONE: cfg.zone,
+    SETUP_ENABLED: cfg.setup ? '1' : '0',
     COOKIE_DAYS: String(cfg.cookieDays),
     COOKIE_DOMAIN: cfg.cookieDomain,
     ADMIN_HOSTS: cfg.alerts.adminHosts.join(','),
