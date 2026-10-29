@@ -12,6 +12,7 @@
  * provisioning creates one on the first deploy.
  */
 import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -51,6 +52,14 @@ function ensureNamespace(title: string): string | null {
 
 const kvId: string | null = cfg.cloudflare.kvNamespaceId ? cfg.cloudflare.kvNamespaceId : ensureNamespace(`${cfg.worker}-STORE`);
 
+// First-run setup token, as cloudflare.config.ts does for the cf CLI: fresh each build, printed,
+// meaningless once an owner password exists.
+const setupToken = cfg.setup ? Array.from(randomBytes(16), (b) => b.toString(16).padStart(2, '0')).join('') : '';
+if (setupToken) {
+  const host = Object.keys(cfg.hosts)[0] ?? `<any proxied host under ${cfg.zone}>`;
+  console.error(`[wicket] setup link, for a deploy without an OWNER_PASSWORD secret (ignored once a password exists): https://${host}/__wicket/setup?token=${setupToken}`);
+}
+
 const wranglerConfig = {
   $schema: 'node_modules/wrangler/config-schema.json',
   name: cfg.worker,
@@ -60,7 +69,7 @@ const wranglerConfig = {
   observability: { enabled: true },
   routes: toRoutes(cfg).map((r) => ({ pattern: r.pattern, zone_name: r.zone })),
   triggers: { crons: toCrons(cfg) },
-  vars: toVars(cfg),
+  vars: { ...toVars(cfg), ...(setupToken ? { SETUP_TOKEN: setupToken } : {}) },
   kv_namespaces: [{ binding: 'STORE', ...(kvId ? { id: kvId } : {}) }],
   analytics_engine_datasets: [{ binding: 'TRAFFIC', dataset: cfg.cloudflare.analyticsDataset }],
 };
