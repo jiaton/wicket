@@ -13,6 +13,10 @@ Today a request with `X-API-Key`, `x-access-token` or `?token=` must carry a val
 - Sensible defaults users can turn on in one line: `passthrough: api` (Authorization, X-API-Key, x-access-token, ?token= on `/api/`).
 - `API_TOKENS` remains for wicket-only tokens (`X-Wicket-Token`) and for apps with no auth of their own.
 
+## Done since 2026-10-28
+
+A (pass-through rules), B1–B3 (hosts, access and limits on the settings page; `open`/`off` modes; wildcard routes), C (Cloudflare section: token check, Analytics probe, one-click IP list and WAF rule), E (security review, all findings fixed), and first-run setup: a deploy with only `zone` + `routes: wildcard` prints a one-time link where the owner picks passwords in the browser (PBKDF2 hashes in KV); `setup: false` keeps the secrets-only path.
+
 ## B. Configure in the browser, deploy once
 
 Deploying is one command, but every change to hosts, modes, allow lists or limits is an edit to `wicket.yaml` plus a redeploy. The settings page already owns the notification policy; it should own the rest.
