@@ -7,7 +7,7 @@ import { emit, queueStatus } from '../notify';
 import { resolvePolicy } from '../notify/policy';
 import { clearBan, clearFailures, isBanned, isLockedDown, liftLockdown, listBans, LOCKDOWN_IP, readBan, readLockdown, type BanKind } from '../store/bans';
 import { clearNotifySettings, clearRuntimeSettings, readRuntimeSettings, writeNotifySettings, writeRuntimeSettings } from '../store/settings';
-import { defaultMode, hostTableOf, isHostMode, PASSTHROUGH_PRESETS } from '../config/hosts';
+import { defaultMode, formatPassthroughSpec, hostTableOf, isHostMode, parsePassthroughSpec, PASSTHROUGH_PRESETS } from '../config/hosts';
 import { LIMIT_FIELDS, LIMIT_KEYS, parseDuration, runtimeOverridesOf, validAllowEntry, validHostname, type LimitKey } from '../config/runtime';
 import { RECIPES } from '../recipes';
 import { resolveRuntime } from '../runtime';
@@ -269,6 +269,7 @@ async function settings(c: Ctx): Promise<Result> {
       mode: h.mode,
       recipe: h.recipe ?? '',
       passthrough: h.passthrough ? (Object.entries(PASSTHROUGH_PRESETS).find(([, p]) => JSON.stringify(p) === JSON.stringify(h.passthrough))?.[0] ?? 'custom') : '',
+      passthroughSpec: h.passthrough && !Object.values(PASSTHROUGH_PRESETS).some((p) => JSON.stringify(p) === JSON.stringify(h.passthrough)) ? formatPassthroughSpec(h.passthrough) : '',
       watchRules: h.watch.length,
       source: savedHosts.has(host) ? 'saved' : 'config',
     }));
@@ -373,10 +374,9 @@ async function saveHost(c: Ctx, action: 'host.save' | 'host.remove', form: FormD
     if (mode === 'observe' && recipe) entry.recipe = recipe;
     if (mode === 'gated' && passthrough) {
       if (passthrough === 'custom') {
-        // Keep the mapping from wicket.yaml (the page cannot edit it): copy the compiled rule.
-        const current = hostTableOf(c.env.HOSTS_JSON)[host]?.passthrough;
-        if (!current) return `${host} has no custom pass-through rule in wicket.yaml to keep.`;
-        entry.passthrough = current;
+        const rule = parsePassthroughSpec(String(form?.get('spec') ?? ''));
+        if (typeof rule === 'string') return `Pass-through rule: ${rule}.`;
+        entry.passthrough = rule;
       } else if (passthrough in PASSTHROUGH_PRESETS) entry.passthrough = passthrough;
       else return `Unknown pass-through preset "${passthrough}".`;
     }

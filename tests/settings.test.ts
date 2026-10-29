@@ -339,3 +339,30 @@ describe('Cloudflare section', () => {
     expect(page2).toContain('<span class="warn">invalid</span> <small>1000: Invalid API Token</small>');
   });
 });
+
+describe('custom pass-through rules on the page', () => {
+  const cookieOf = (res: Response) => (res.headers.get('set-cookie') ?? '').split(';')[0]!;
+  const post = (h: ReturnType<typeof harness>, cookie: string, fields: Record<string, string>) =>
+    h.run(h.request('/__wicket/settings', { method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' }, body: new URLSearchParams(fields) }));
+
+  it('parses, saves, round-trips and validates the one-line form', async () => {
+    const { parsePassthroughSpec, formatPassthroughSpec } = await import('../src/config/hosts');
+    const rule = parsePassthroughSpec('headers=Authorization, X-Session; cookies=sid; paths=/api/,/mcp; status=401,403');
+    expect(rule).toEqual({ headers: ['authorization', 'x-session'], cookies: ['sid'], params: [], paths: ['/api/', '/mcp'], status: [401, 403] });
+    expect(formatPassthroughSpec(rule as never)).toBe('headers=authorization,x-session; cookies=sid; paths=/api/,/mcp; status=401,403');
+    expect(parsePassthroughSpec('paths=/api/')).toMatch(/at least one/);
+    expect(parsePassthroughSpec('headers=cookie')).toMatch(/not cookie/);
+    expect(parsePassthroughSpec('nonsense')).toMatch(/should look like/);
+    expect(parsePassthroughSpec('status=9')).toMatch(/status codes/);
+
+    const h = harness();
+    const owner = cookieOf(await h.login('owner-pw'));
+    expect((await post(h, owner, { action: 'host.save', host: 'app.example.test', mode: 'gated', recipe: '', passthrough: 'custom', spec: 'paths=/x' })).status).toBe(400);
+    expect((await post(h, owner, { action: 'host.save', host: 'app.example.test', mode: 'gated', recipe: '', passthrough: 'custom', spec: 'cookies=sid; paths=/api/' })).status).toBe(303);
+    expect((await h.run(h.request('/api/me', { host: 'app.example.test', headers: { cookie: 'sid=1', accept: '*/*' } }))).status).toBe(200);
+    expect((await h.run(h.request('/api/me', { host: 'app.example.test', headers: { accept: '*/*' } }))).status).toBe(401);
+    const page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('value="cookies=sid; paths=/api/"');
+    expect(page).toContain('<option value="custom" selected>');
+  });
+});

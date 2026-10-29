@@ -36,7 +36,7 @@ h2{font-size:15px;margin:22px 0 4px}.head{display:flex;justify-content:space-bet
 .pager span{color:var(--muted)}form.row{margin-top:12px;align-items:center}form.row input{flex:1;width:auto}form.row button{flex:none}
 .warn{color:var(--err)}.sections{display:flex;gap:12px;flex-wrap:wrap;font-size:13px;margin:-6px 0 14px}textarea{width:100%;font:13px/1.4 ui-monospace,monospace;padding:8px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;resize:vertical}
 .limits td{font-size:13px}.limits input{width:7em;padding:6px 8px;font-size:13px}
-.hosts td{text-align:left;white-space:normal}.hostrow select{margin:6px 4px 0 0;font-size:13px;max-width:100%}.hostrow .actions{display:inline-flex;gap:6px;margin-left:4px}.hostrow .actions button{margin-top:6px}
+.hosts td{text-align:left;white-space:normal}.hostrow select{margin:6px 4px 0 0;font-size:13px;max-width:100%}.hostrow input.spec{display:block;width:100%;margin-top:6px;padding:6px 8px;font:12px/1.4 ui-monospace,monospace}.hostrow .actions{display:inline-flex;gap:6px;margin-left:4px}.hostrow .actions button{margin-top:6px}
 .hostrow.add{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:10px}.hostrow.add input{flex:1 1 200px;width:auto;padding:6px 8px;font-size:13px}.hostrow.add select{margin:0}.hostrow.add button{margin:0}
 h1{font-size:18px;margin:0 0 4px}p{margin:0 0 16px;color:var(--muted);font-size:14px}
 label{display:block;font-size:13px;color:var(--muted);margin:12px 0 6px}label.check{display:flex;gap:8px;align-items:center;color:var(--fg)}label.check input{width:auto}

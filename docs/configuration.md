@@ -119,7 +119,7 @@ hosts:
     recipe: jellyseerr                         # optional: the app's login rule also counts for pass-through requests
 ```
 
-The `api` preset covers `/api/`, `/v1/`, `/v2/`, `/rest/`, `/graphql`, `/mcp`, `/sse`, `/rpc` and `/ws`; anything else stays gated. An app that answers 403 or 400 to bad credentials needs `status` (or its recipe), or its rejections are never counted.
+The `api` preset covers `/api/`, `/v1/`, `/v2/`, `/rest/`, `/graphql`, `/mcp`, `/sse`, `/rpc` and `/ws`; anything else stays gated. An app that answers 403 or 400 to bad credentials needs `status` (or its recipe), or its rejections are never counted. On the settings page the same rule is one line: `headers=authorization,x-session; cookies=sid; params=token; paths=/api/,/mcp; status=401,403` (every part optional, at least one of headers/cookies/params).
 
 What this costs: anyone can add such a header and reach the app's authentication code, exactly as on an observe host. The app's own login must therefore be sound; wicket adds the ban after five rejections. A stale token in a polling client is five 401s away from a ban, so keep `limits.origin` at five or more. Owner-trusted and allow-listed addresses are never banned this way.
 

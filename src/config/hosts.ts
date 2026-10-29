@@ -77,6 +77,56 @@ export function passthroughOf(raw: unknown): Passthrough | undefined {
   return p.headers.length || p.cookies.length || p.params.length ? p : undefined;
 }
 
+/**
+ * One-line form of a rule for the settings page:
+ * `headers=authorization,x-session; cookies=sid; params=token; paths=/api/,/mcp; status=401,403`.
+ * Every part optional; at least one of headers/cookies/params. Returns an error message or the rule.
+ */
+export function parsePassthroughSpec(spec: string): Passthrough | string {
+  const p: Passthrough = { headers: [], cookies: [], params: [], paths: [], status: PASSTHROUGH_DEFAULT_STATUS };
+  for (const part of spec.split(';').map((s) => s.trim()).filter(Boolean)) {
+    const eq = part.indexOf('=');
+    if (eq < 0) return `"${part}" should look like headers=a,b`;
+    const key = part.slice(0, eq).trim().toLowerCase();
+    const values = part.slice(eq + 1).split(',').map((s) => s.trim()).filter(Boolean);
+    if (!values.length) return `"${key}" has no values`;
+    switch (key) {
+      case 'headers':
+        p.headers = values.map((v) => v.toLowerCase());
+        if (p.headers.some((h) => h === 'cookie' || h === 'host' || !/^[a-z0-9-]+$/.test(h))) return 'headers must be header names (not cookie or host)';
+        break;
+      case 'cookies':
+        p.cookies = values;
+        break;
+      case 'params':
+        p.params = values;
+        break;
+      case 'paths':
+        p.paths = values;
+        if (p.paths.some((x) => !x.startsWith('/'))) return 'paths must start with /';
+        break;
+      case 'status':
+        p.status = values.map(Number);
+        if (p.status.some((n) => !Number.isInteger(n) || n < 100 || n > 599)) return 'status must be HTTP status codes';
+        break;
+      default:
+        return `unknown part "${key}" (headers, cookies, params, paths, status)`;
+    }
+  }
+  if (!p.headers.length && !p.cookies.length && !p.params.length) return 'at least one of headers, cookies or params is needed';
+  return p;
+}
+
+export function formatPassthroughSpec(p: Passthrough): string {
+  const parts: string[] = [];
+  if (p.headers.length) parts.push(`headers=${p.headers.join(',')}`);
+  if (p.cookies.length) parts.push(`cookies=${p.cookies.join(',')}`);
+  if (p.params.length) parts.push(`params=${p.params.join(',')}`);
+  if (p.paths.length) parts.push(`paths=${p.paths.join(',')}`);
+  if (p.status.join(',') !== PASSTHROUGH_DEFAULT_STATUS.join(',')) parts.push(`status=${p.status.join(',')}`);
+  return parts.join('; ');
+}
+
 /** One host's entry from JSON. Malformed → `gated`, so a typo can only make a host stricter. */
 export function hostEntryOf(raw: unknown): HostConfig {
   if (!raw || typeof raw !== 'object') return GATED;
