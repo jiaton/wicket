@@ -11,6 +11,19 @@ export const APP_TOKEN_HEADERS = ['x-access-token', 'x-api-key'];
 /** Query parameter many apps use for their own token (URL-only MCP clients, WebSockets); left in place. */
 export const APP_TOKEN_PARAM = 'token';
 
+/** Host-only cookie set by a share link; `id.exp.sig`, valid for that host only. */
+export const SHARE_COOKIE = '__wicket_share';
+
+export function shareCookieValue(req: Request): string | undefined {
+  for (const part of (req.headers.get('cookie') ?? '').split(';')) {
+    const [k, ...v] = part.trim().split('=');
+    if (k === SHARE_COOKIE) return v.join('=');
+  }
+  return undefined;
+}
+
+export const setShareCookie = (value: string, maxAge: number): string => `${SHARE_COOKIE}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`;
+
 export function cookieValue(req: Request): string | undefined {
   for (const part of (req.headers.get('cookie') ?? '').split(';')) {
     const [k, ...v] = part.trim().split('=');
@@ -29,7 +42,7 @@ export function stripCredentials(req: Request): Request {
   const rest = (req.headers.get('cookie') ?? '')
     .split(';')
     .map((s) => s.trim())
-    .filter((s) => s && !s.startsWith(`${COOKIE_NAME}=`));
+    .filter((s) => s && !s.startsWith(`${COOKIE_NAME}=`) && !s.startsWith(`${SHARE_COOKIE}=`));
   if (rest.length) h.set('cookie', rest.join('; '));
   else h.delete('cookie');
   h.delete(TOKEN_HEADER);

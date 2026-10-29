@@ -4,8 +4,9 @@ import { apiTokens, matchToken } from '../config/tokens';
 import type { Env } from '../config/env';
 import { HealthFlag, RecentSet, SlidingCounter } from '../core/counters';
 import { createFallbackTick } from '../cron';
-import { cookieValue, presentedToken, stripCredentials, wantsHtml } from '../core/credentials';
-import { verifySession } from '../core/crypto';
+import { cookieValue, presentedToken, shareCookieValue, stripCredentials, wantsHtml } from '../core/credentials';
+import { signShare, verifySession } from '../core/crypto';
+import { readShare } from '../store/shares';
 import { addressKey, clientIp, country } from '../core/ip';
 import { underPrefix } from '../core/paths';
 import { emit } from '../notify';
@@ -28,7 +29,7 @@ const KV_DOWN_MS = 5 * 60_000;
 const passthrough = async (c: Ctx, outcome: Outcome): Promise<Result> => [await c.deps.fetch(stripCredentials(c.req)), outcome];
 
 /** Outcomes whose requests reached the origin: their paths may carry app secrets (webhook ids, share keys). */
-const REACHED_ORIGIN: ReadonlySet<Outcome> = new Set<Outcome>(['pass', 'token', 'allow', 'bypass', 'preflight', 'observe', 'app', 'open', 'origin-fail', 'ban-origin']);
+const REACHED_ORIGIN: ReadonlySet<Outcome> = new Set<Outcome>(['pass', 'share', 'token', 'allow', 'bypass', 'preflight', 'observe', 'app', 'open', 'origin-fail', 'ban-origin']);
 
 /** The path as written to Analytics Engine: whole for rejected requests (scanner analysis), two segments for forwarded ones. */
 export function analyticsPath(pathname: string, outcome: Outcome): string {
@@ -99,7 +100,19 @@ export const STEPS: Step[] = [
     return passthrough(c, 'pass');
   },
 
-  // 11. A wrong explicit token is a strike for the address (and, for wicket's own carriers, for
+  // 11. A share cookie (set by a share link the owner made): one host, until it expires or
+  //     the owner revokes it. Signature first (no KV for forgeries), then the record.
+  async (c) => {
+    const value = shareCookieValue(c.req);
+    if (!value || !c.auth.cookieSecret) return null;
+    const [id, expText, sig] = value.split('.');
+    const exp = Number(expText);
+    if (!id || !sig || !Number.isFinite(exp) || exp * 1000 < c.deps.now()) return null;
+    if (sig !== (await signShare(c.auth.cookieSecret, id, c.url.hostname, exp))) return null;
+    return (await readShare(c.env, id)) ? passthrough(c, 'share') : null;
+  },
+
+  // 12. A wrong explicit token is a strike for the address (and, for wicket's own carriers, for
   //     the lockdown counter); a foreign bearer is ignored, not punished. During a lockdown the
   //     strike still lands, then the answer is "locked": tokens are not guessable for free.
   async (c) => {
@@ -110,7 +123,7 @@ export const STEPS: Step[] = [
     return result;
   },
 
-  // 12. Nothing presented. A few requests for known scanner paths/agents, or hundreds of
+  // 13. Nothing presented. A few requests for known scanner paths/agents, or hundreds of
   //     anonymous probes in a minute = scanner → ban; otherwise the password page (or a
   //     JSON 401 for non-browsers).
   async (c) => {

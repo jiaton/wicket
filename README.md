@@ -45,6 +45,7 @@ Then connect your Cloudflare account: create an API token (Account → *Analytic
 ## Day to day
 
 - **Home**: put your public IP in `allow_ips`; no password page at home, nobody there can get the house banned. Dynamic IP → `allow_dns`; no public IP → logging in as owner makes the address trusted for `trust_window` ([details](docs/configuration.md#no-fixed-public-ip)).
+- **Share a host**: the settings page makes a link that opens one host for a day or a week without the password (a friend trying your app); revoke it any time.
 - **Ban message**: address, country, host, reason, **Unban** button. Scanner bans come as one digest line per hour; nothing happened → no message.
 - **Settings page** `/__wicket/settings` (owner): hosts and modes, allow lists and trust, limits, notification policy, newest bans with Unban. Everything saved there is live within 30 s, no redeploy.
 - **Banned yourself?** Settings page, the link in the message, or `cf kv keys delete --force --namespace-id <id> 'ban:<ip>'`.

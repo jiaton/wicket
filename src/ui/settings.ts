@@ -68,6 +68,11 @@ export interface SettingsView {
   runtimeOverridden: boolean;
   access: { allowIps: string[]; allowDns: string[]; trustSeconds: number; bypass: string[]; saved: boolean };
   cloudflare: CloudflareView;
+  shares: { id: string; host: string; label: string; exp: number; at: number }[];
+  shareHosts: string[];
+  shareDurations: string[];
+  /** The link of a share created by the request that led here (shown once). */
+  newShareLink?: string;
   /** Where the passwords live: `secrets` (read-only here) or `kv` (changeable here). */
   passwords: 'secrets' | 'kv';
   hasFriend: boolean;
@@ -103,6 +108,13 @@ const ago = (ms: number) => {
   if (s < 5400) return `${Math.round(s / 60)} min ago`;
   if (s < 172_800) return `${Math.round(s / 3600)} h ago`;
   return `${Math.round(s / 86_400)} d ago`;
+};
+
+const inFuture = (ms: number) => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 3600) return `in ${Math.max(1, Math.round(s / 60))} min`;
+  if (s < 172_800) return `in ${Math.round(s / 3600)} h`;
+  return `in ${Math.round(s / 86_400)} d`;
 };
 
 const inMinutes = (s: number) => (s < 60 ? 'with the next five-minute job' : `in about ${Math.round(s / 60)} min`);
@@ -180,7 +192,7 @@ export function settingsPage(v: SettingsView): string {
     'wicket · settings',
     `<div class="head">${brand('wicket · settings')}<a href="${esc(v.logout)}">Sign out</a></div>
 <p>Signed in as owner on ${esc(v.host)}. Settings apply to every host.</p>
-<nav class="sections"><a href="#hosts">Hosts</a><a href="#access">Access</a><a href="#limits">Limits</a><a href="#passwords">Passwords</a><a href="#cloudflare">Cloudflare</a><a href="#notifications">Notifications</a><a href="#bans">Bans</a></nav>
+<nav class="sections"><a href="#hosts">Hosts</a><a href="#access">Access</a><a href="#limits">Limits</a><a href="#shares">Shares</a><a href="#passwords">Passwords</a><a href="#cloudflare">Cloudflare</a><a href="#notifications">Notifications</a><a href="#bans">Bans</a></nav>
 
 <h2 id="hosts">Hosts</h2>
 <p><small>Mode, recipe and pass-through per host (a custom rule: <code>headers=…; cookies=…; params=…; paths=…; status=…</code>, see the docs). Changes are live within 30 s; a host must also be routed to the Worker (its own route in wicket.yaml, or <code>routes: wildcard</code>). Unlisted routed hosts are <b>${esc(v.defaultMode)}</b>.${v.runtimeOverridden ? ' Entries marked <i>saved here</i> override wicket.yaml until removed or reset.' : ''}</small></p>
@@ -206,6 +218,24 @@ ${v.runtimeOverridden ? `<form method="post" action="${esc(v.action)}" class="in
 <table class="limits">${limitRows}</table>
 <div class="row"><button type="submit" name="action" value="limits.save">Save limits</button></div>
 </form>
+
+<h2 id="shares">Shares</h2>
+<p><small>A share link opens one host for a while without the password: send it to a friend trying your app. The link sets a cookie for that host only; revoking a share ends every cookie it issued. Shares cannot open the settings page.</small></p>
+${v.newShareLink ? `<p class="ok"><b>New share link</b> (shown only now):<br><code class="link">${esc(v.newShareLink)}</code></p>` : ''}
+<table>${
+      v.shares.length
+        ? v.shares
+            .map(
+              (s) =>
+                `<tr><td><b>${esc(s.label)}</b> <small>${esc(s.host)} · expires ${esc(inFuture(s.exp * 1000 - v.now))} · made ${esc(ago(v.now - s.at))}</small></td>` +
+                `<td><form method="post" action="${esc(v.action)}" class="inline"><input type="hidden" name="id" value="${esc(s.id)}"><button type="submit" name="action" value="share.revoke" class="secondary small">Revoke</button></form></td></tr>`,
+            )
+            .join('')
+        : '<tr><td><small>No active shares.</small></td><td></td></tr>'
+    }</table>
+<form method="post" action="${esc(v.action)}" class="hostrow add">${
+      v.shareHosts.length ? select('host', v.shareHosts.map((h): [string, string] => [h, h]), v.shareHosts[0] ?? '') : '<input name="host" placeholder="host.example.com" aria-label="host" required>'
+    }${select('duration', v.shareDurations.map((d): [string, string] => [d, d]), '7d')}<input name="label" placeholder="who it is for" maxlength="60" aria-label="label"><button type="submit" name="action" value="share.create" class="small">Create share link</button></form>
 
 <h2 id="passwords">Passwords</h2>
 ${

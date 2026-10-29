@@ -1,8 +1,9 @@
 import { listRemove } from '../cloudflare/lists';
 import { parseChannels } from '../config/channels';
 import { DEFAULT_POLICY, isDelivery, mergePolicy, POLICY_KINDS, type NotifyPolicy } from '../config/notifications';
-import { cookieValue, ENDPOINT_PREFIX, safeNext, sameOrigin, setCookie } from '../core/credentials';
-import { safeEqual, signSession, signUnban, verifySession, type Role } from '../core/crypto';
+import { cookieValue, ENDPOINT_PREFIX, safeNext, sameOrigin, setCookie, setShareCookie } from '../core/credentials';
+import { safeEqual, signSession, signShare, signUnban, verifySession, type Role } from '../core/crypto';
+import { listShares, readShare, revokeShare, writeShare } from '../store/shares';
 import { emit, queueStatus } from '../notify';
 import { resolvePolicy } from '../notify/policy';
 import { clearBan, clearFailures, isBanned, isLockedDown, liftLockdown, listBans, LOCKDOWN_IP, readBan, readLockdown, type BanKind } from '../store/bans';
@@ -39,6 +40,7 @@ export async function endpoints(c: Ctx): Promise<Result | null> {
   if (route === 'login' && c.req.method === 'POST') return login(c);
   if (route === 'settings') return settings(c);
   if (route === 'setup') return setup(c);
+  if (route === 'share' && c.req.method === 'GET') return share(c);
   if (route === 'login') {
     return [html(loginPage({ host: c.url.hostname, action: LOGIN_ACTION, next: safeNext(c.url.searchParams.get('next')) }), 200), 'reject'];
   }
@@ -165,6 +167,43 @@ async function setup(c: Ctx): Promise<Result> {
   ];
 }
 
+const SHARE_PATH = `${ENDPOINT_PREFIX}share`;
+const SHARE_DURATIONS: Record<string, number> = { '1h': 3600, '1d': 86_400, '7d': 7 * 86_400, '30d': 30 * 86_400 };
+
+/**
+ * /__wicket/share?s=<id>.<exp>.<sig> — a link the owner made for this host. Valid signature,
+ * not expired, record still in KV (not revoked) → a host-only cookie for the rest of the
+ * share's life, then on to the app. No password, no counting, no settings access.
+ */
+async function share(c: Ctx): Promise<Result> {
+  const value = c.url.searchParams.get('s') ?? '';
+  const [id, expText, sig] = value.split('.');
+  const exp = Number(expText);
+  const now = Math.floor(c.deps.now() / 1000);
+  const bad = (why: string): Result => [html(messagePage('Share link', why), 410), 'reject'];
+  if (!id || !sig || !Number.isFinite(exp) || !c.auth.cookieSecret) return bad('This link is not valid.');
+  if (exp < now) return bad('This link has expired.');
+  if (!safeEqual(sig, await signShare(c.auth.cookieSecret, id, c.url.hostname, exp))) return bad('This link is not valid for this host.');
+  const record = await readShare(c.env, id);
+  if (!record || record.host !== c.url.hostname) return bad('This share was revoked.');
+  return [new Response(null, { status: 303, headers: { location: `${c.url.origin}/`, 'set-cookie': setShareCookie(value, exp - now), 'cache-control': 'no-store' } }), 'share'];
+}
+
+/** Settings page: create a share for one host for a while; the link is shown once on the page. */
+async function createShare(c: Ctx, form: FormData | null): Promise<string> {
+  const host = String(form?.get('host') ?? '').trim().toLowerCase();
+  if (!HOSTNAME.test(host)) return `"${host}" is not a valid hostname.`;
+  if (c.cfg.cookieDomain && host !== c.cfg.cookieDomain && !host.endsWith(`.${c.cfg.cookieDomain}`)) return `"${host}" is not under ${c.cfg.cookieDomain}.`;
+  const seconds = SHARE_DURATIONS[String(form?.get('duration') ?? '')];
+  if (!seconds) return 'Pick a duration.';
+  const label = String(form?.get('label') ?? '').trim().slice(0, 60) || 'share';
+  const id = randomSecret().slice(0, 16);
+  const exp = Math.floor(c.deps.now() / 1000) + seconds;
+  await writeShare(c.env, id, { host, label, exp, at: c.deps.now() }, c.deps.now());
+  const sig = await signShare(c.auth.cookieSecret, id, host, exp);
+  return `link:https://${host}${SHARE_PATH}?s=${id}.${exp}.${sig}`;
+}
+
 /** Settings page: change the KV-stored passwords (owner must retype the current one). */
 async function changePasswords(c: Ctx, form: FormData | null): Promise<string> {
   if (c.auth.kind !== 'hash') return 'Passwords are set in the secrets; change them there and redeploy.';
@@ -226,6 +265,15 @@ async function settings(c: Ctx): Promise<Result> {
       const result = action === 'access.save' ? await saveAccess(c, form) : await saveLimits(c, form);
       if (result !== 'ok') return [html(messagePage('Not saved', result), 400), 'admin'];
       notice = action === 'access.save' ? 'access-saved' : 'limits-saved';
+    } else if (action === 'share.create') {
+      const result = await createShare(c, form);
+      if (!result.startsWith('link:')) return [html(messagePage('Not created', result), 400), 'admin'];
+      return [new Response(null, { status: 303, headers: { location: `${c.url.origin}${SETTINGS_PATH}?ok=share&link=${encodeURIComponent(result.slice(5))}#shares`, 'cache-control': 'no-store' } }), 'admin'];
+    } else if (action === 'share.revoke') {
+      const id = String(form?.get('id') ?? '');
+      if (!(await readShare(c.env, id))) return [html(messagePage('Not found', 'No such share.'), 404), 'admin'];
+      await revokeShare(c.env, id);
+      notice = 'share-revoked';
     } else if (action === 'auth.password') {
       const result = await changePasswords(c, form);
       if (result !== 'ok') return [html(messagePage('Not changed', result), 400), 'admin'];
@@ -259,7 +307,7 @@ async function settings(c: Ctx): Promise<Result> {
     return [new Response(null, { status: 303, headers: { location: `${c.url.origin}${SETTINGS_PATH}?ok=${notice}`, 'cache-control': 'no-store' } }), 'admin'];
   }
 
-  const [policy, queues, lockdown, bans, rt] = await Promise.all([resolvePolicy(c.env), queueStatus(c.env, now), readLockdown(c.env), listBans(c.env), resolveRuntime(c.env)]);
+  const [policy, queues, lockdown, bans, rt, shares] = await Promise.all([resolvePolicy(c.env), queueStatus(c.env, now), readLockdown(c.env), listBans(c.env), resolveRuntime(c.env), listShares(c.env)]);
   const cloudflare = await cloudflareStatus(c, rt.settings.listId, rt.overrides.cloudflare?.zoneId);
   const savedHosts = new Set(Object.keys(rt.overrides.hosts ?? {}).map((h) => h.toLowerCase()));
   const hostRows: HostRow[] = Object.entries(rt.hosts)
@@ -301,6 +349,8 @@ async function settings(c: Ctx): Promise<Result> {
     'limits-saved': 'Limits saved. Live on every data centre within 30 s.',
     'cf-list': 'IP list ready. Bans are added to it from now on.',
     'cf-creds': 'Cloudflare token saved.',
+    share: 'Share created. Copy the link below; it is shown only now.',
+    'share-revoked': 'Share revoked; its cookies stop working at once.',
     password: 'Passwords changed. Browsers that used the old owner password are signed out.',
     setup: 'Welcome. wicket is set up; this address is allow-listed and signed in as owner.',
     'cf-waf': 'WAF rule ready. Listed addresses are blocked at the edge on every proxied host.',
@@ -326,6 +376,10 @@ async function settings(c: Ctx): Promise<Result> {
         },
         limits: { values: Object.fromEntries(LIMIT_KEYS.map((k) => [k, rt.settings[k]])) as Record<LimitKey, number>, saved: rt.overrides.limits !== undefined },
         cloudflare,
+        shares,
+        shareHosts: Object.keys(rt.hosts).sort(),
+        shareDurations: Object.keys(SHARE_DURATIONS),
+        newShareLink: ok === 'share' ? (c.url.searchParams.get('link') ?? undefined) : undefined,
         passwords: c.auth.kind === 'plain' ? 'secrets' : 'kv',
         hasFriend: Boolean(c.auth.friend),
         policy,

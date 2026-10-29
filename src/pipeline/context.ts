@@ -25,6 +25,7 @@ export type Outcome =
   | 'off' // host switched off → maintenance page
   | 'origin-fail' // observe-mode passthrough whose origin answer matched a watch rule
   | 'login' // password accepted
+  | 'share' // share-link cookie → origin (one host, time-limited, revocable)
   | 'fail' // wrong password/token (not yet banned)
   | 'ban' // this request triggered a password/token ban
   | 'ban-scan' // this request triggered a scanner ban (signature or burst)

@@ -54,6 +54,11 @@ export async function verifySession(
   return safeEqual(sig, expected) ? { role, issuedAt } : null;
 }
 
+/** Share links and share cookies: `id.exp.sig`, bound to one host. */
+export async function signShare(secret: string, id: string, host: string, exp: number): Promise<string> {
+  return hmacHex(`${secret}\nshare`, `${id}.${host}.${exp}`);
+}
+
 /** Signed, expiring parameters for the one-click Unban / Lift-lockdown link. */
 export async function signUnban(secret: string, ip: string, exp: number, at: number): Promise<string> {
   return hmacHex(`${secret}\nunban`, `${ip}.${exp}.${at}`);
