@@ -84,6 +84,7 @@ export function setupPage(v: SetupView): string {
 <label for="pw2">Repeat it</label><input id="pw2" name="password2" type="password" required minlength="12" autocomplete="new-password">
 <label for="fpw">Friend password (optional, for people you share a host with)</label><input id="fpw" name="friend" type="password" autocomplete="new-password">
 <label class="check"><input type="checkbox" name="allow" value="1" checked> Never ask my current address (<code>${esc(v.ip)}</code>) for a password</label>
+<p><small>Untick if this address is shared with strangers (mobile carrier, VPN, café); a home connection is fine.</small></p>
 ${v.cloudflare ? '' : `<label for="cft">Cloudflare API token (optional, for edge bans and traffic analysis; can be added later)</label><input id="cft" name="cfToken" type="password" autocomplete="off">
 <label for="cfa">Cloudflare account id</label><input id="cfa" name="cfAccount" pattern="[0-9a-f]{32}">`}
 <button type="submit">Create</button>

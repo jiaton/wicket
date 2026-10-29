@@ -5,7 +5,7 @@ import type { Env } from '../config/env';
 import { HealthFlag, RecentSet, SlidingCounter } from '../core/counters';
 import { createFallbackTick } from '../cron';
 import { cookieValue, presentedToken, shareCookieValue, stripCredentials, wantsHtml } from '../core/credentials';
-import { signShare, verifySession } from '../core/crypto';
+import { safeEqual, signShare, verifySession } from '../core/crypto';
 import { readShare } from '../store/shares';
 import { addressKey, clientIp, country } from '../core/ip';
 import { underPrefix } from '../core/paths';
@@ -112,7 +112,7 @@ export const STEPS: Step[] = [
     const [id, expText, sig] = value.split('.');
     const exp = Number(expText);
     if (!id || !sig || !Number.isFinite(exp) || exp * 1000 < c.deps.now()) return null;
-    if (sig !== (await signShare(c.auth.cookieSecret, id, c.url.hostname, exp))) return null;
+    if (!safeEqual(sig, await signShare(c.auth.cookieSecret, id, c.url.hostname, exp))) return null;
     return (await readShare(c.env, id)) ? passthrough(c, 'share') : null;
   },
 

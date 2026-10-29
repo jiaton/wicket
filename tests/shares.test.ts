@@ -10,15 +10,14 @@ describe('share links', () => {
     const h = harness({ HOSTS_JSON: JSON.stringify({ 'app.example.test': { mode: 'gated' }, 'nas.example.test': { mode: 'gated' } }) });
     const owner = cookieOf(await h.login('owner-pw'));
     const created = await post(h, owner, { action: 'share.create', host: 'app.example.test', duration: '7d', label: 'Alice' });
-    expect(created.status).toBe(303);
-    const link = new URL(decodeURIComponent(new URL(created.headers.get('location')!).searchParams.get('link')!));
+    expect(created.status).toBe(200); // the page itself, rendered from the POST: the link never travels in a URL
+    const page = await created.text();
+    const link = new URL(page.match(/https:\/\/[^<"]+\/__wicket\/share\?s=[^<"]+/)![0]);
     expect(link.hostname).toBe('app.example.test');
     expect(link.pathname).toBe('/__wicket/share');
-
-    // The page shows the link once and lists the share.
-    const page = await (await h.run(h.request(created.headers.get('location')!.replace('https://nas.example.test', ''), { headers: { cookie: owner } }))).text();
     expect(page).toContain('New share link');
     expect(page).toContain('<b>Alice</b> <small>app.example.test · expires in 7 d');
+    expect(await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text()).not.toContain('New share link');
 
     // A friend with the link: cookie for that host, straight to the app; wrong host or no cookie → password page.
     const visit = await h.run(h.request(link.pathname + link.search, { host: 'app.example.test', ip: '198.51.100.20' }));
@@ -44,7 +43,7 @@ describe('share links', () => {
     const h = harness({ HOSTS_JSON: JSON.stringify({ 'app.example.test': { mode: 'gated' } }) });
     const owner = cookieOf(await h.login('owner-pw'));
     const created = await post(h, owner, { action: 'share.create', host: 'app.example.test', duration: '1d', label: 'Bob' });
-    const link = new URL(decodeURIComponent(new URL(created.headers.get('location')!).searchParams.get('link')!));
+    const link = new URL((await created.text()).match(/https:\/\/[^<"]+\/__wicket\/share\?s=[^<"]+/)![0]);
     const visit = await h.run(h.request(link.pathname + link.search, { host: 'app.example.test' }));
     const shareCookie = cookieOf(visit);
     expect((await h.run(h.request('/', { host: 'app.example.test', headers: { cookie: shareCookie } }))).status).toBe(200);

@@ -2,8 +2,12 @@
 export const clientIp = (req: Request): string => req.headers.get('cf-connecting-ip') ?? '0.0.0.0';
 
 /** Two-letter country code from the request's `cf` object (or the header, in tests). */
-export const country = (req: Request): string =>
-  ((req as { cf?: { country?: string } }).cf?.country ?? req.headers.get('cf-ipcountry') ?? '??').toUpperCase();
+export const country = (req: Request): string => {
+  const cf = (req as { cf?: { country?: string } }).cf;
+  // Behind Cloudflare `request.cf` always exists; the header is for tests and local runs only,
+  // never a fallback a client could fill in when the platform left `country` out.
+  return (cf ? (cf.country ?? '??') : (req.headers.get('cf-ipcountry') ?? '??')).toUpperCase();
+};
 
 function ipv4ToInt(ip: string): number | null {
   const parts = ip.split('.');

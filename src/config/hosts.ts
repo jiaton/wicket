@@ -125,6 +125,9 @@ export function passthroughOf(raw: unknown): Passthrough | undefined {
  * `headers=authorization,x-session; cookies=sid; params=token; paths=/api/,/mcp; status=401,403`.
  * Every part optional; at least one of headers/cookies/params. Returns an error message or the rule.
  */
+/** Headers browsers and proxies add to every request: never a credential carrier. */
+const ALWAYS_PRESENT_HEADERS = new Set(['cookie', 'host', 'accept', 'accept-encoding', 'accept-language', 'user-agent', 'connection', 'content-type', 'content-length', 'referer', 'origin', 'cache-control', 'pragma', 'upgrade-insecure-requests', 'dnt', 'te', 'priority', 'via', 'x-real-ip']);
+
 export function parsePassthroughSpec(spec: string): Passthrough | string {
   const p: Passthrough = { headers: [], cookies: [], params: [], paths: [], status: PASSTHROUGH_DEFAULT_STATUS };
   for (const part of spec.split(';').map((s) => s.trim()).filter(Boolean)) {
@@ -136,7 +139,8 @@ export function parsePassthroughSpec(spec: string): Passthrough | string {
     switch (key) {
       case 'headers':
         p.headers = values.map((v) => v.toLowerCase());
-        if (p.headers.some((h) => h === 'cookie' || h === 'host' || !/^[a-z0-9-]+$/.test(h))) return 'headers must be header names (not cookie or host)';
+        if (p.headers.some((h) => !/^[a-z0-9-]+$/.test(h))) return 'headers must be header names';
+        if (p.headers.some((h) => ALWAYS_PRESENT_HEADERS.has(h) || h.startsWith('cf-') || h.startsWith('sec-') || h.startsWith('x-forwarded-'))) return 'that header is on every request and would open the host to everyone';
         break;
       case 'cookies':
         p.cookies = values;
@@ -150,7 +154,7 @@ export function parsePassthroughSpec(spec: string): Passthrough | string {
         break;
       case 'status':
         p.status = values.map(Number);
-        if (p.status.some((n) => !Number.isInteger(n) || n < 100 || n > 599)) return 'status must be HTTP status codes';
+        if (p.status.some((n) => !Number.isInteger(n) || n < 400 || n > 499)) return 'status must be 4xx codes (what the app answers to a bad credential)';
         break;
       default:
         return `unknown part "${key}" (headers, cookies, params, paths, status)`;

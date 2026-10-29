@@ -351,9 +351,9 @@ describe('custom pass-through rules on the page', () => {
     expect(rule).toEqual({ headers: ['authorization', 'x-session'], cookies: ['sid'], params: [], paths: ['/api/', '/mcp'], status: [401, 403] });
     expect(formatPassthroughSpec(rule as never)).toBe('headers=authorization,x-session; cookies=sid; paths=/api/,/mcp; status=401,403');
     expect(parsePassthroughSpec('paths=/api/')).toMatch(/at least one/);
-    expect(parsePassthroughSpec('headers=cookie')).toMatch(/not cookie/);
+    expect(parsePassthroughSpec('headers=cookie')).toMatch(/every request/);
     expect(parsePassthroughSpec('nonsense')).toMatch(/should look like/);
-    expect(parsePassthroughSpec('status=9')).toMatch(/status codes/);
+    expect(parsePassthroughSpec('status=9')).toMatch(/4xx codes/);
 
     const h = harness();
     const owner = cookieOf(await h.login('owner-pw'));

@@ -17,7 +17,7 @@ import { hostStats, type HostStats } from '../cloudflare/analytics';
 import type { CloudflareView } from '../ui/settings';
 import { isTrusted, markTrusted } from '../store/trust';
 import { loginPage, messagePage, setupPage } from '../ui/pages';
-import { hashPassword, randomSecret, verifyPassword } from '../core/password';
+import { hashPassword, matchPasswords, randomSecret, verifyPassword } from '../core/password';
 import { readAuth, writeAuth, writeCloudflareCreds } from '../store/auth';
 import { settingsPage, type BanRow, type HostRow } from '../ui/settings';
 import type { Ctx, Result } from './context';
@@ -112,8 +112,8 @@ async function matchPassword(c: Ctx, password: string): Promise<Role | null> {
     return null;
   }
   if (c.auth.kind === 'hash') {
-    if (c.auth.owner && (await verifyPassword(password, c.auth.owner))) return 'owner';
-    if (c.auth.friend && (await verifyPassword(password, c.auth.friend))) return 'friend';
+    const i = await matchPasswords(password, [c.auth.owner, c.auth.friend]);
+    return i === 0 ? 'owner' : i === 1 ? 'friend' : null;
   }
   return null;
 }
@@ -151,7 +151,7 @@ async function setup(c: Ctx): Promise<Result> {
   if (await readAuth(c.env)) return [html(messagePage('Already set up', 'An owner password exists; sign in instead.'), 409), 'reject'];
   const cookieSecret = randomSecret();
   const ownerHash = await hashPassword(password);
-  const friendHash = friend ? await hashPassword(friend) : undefined;
+  const friendHash = friend ? await hashPassword(friend, ownerHash) : undefined;
   await writeAuth(c.env, { owner: ownerHash, ...(friendHash ? { friend: friendHash } : {}), cookieSecret, at: c.deps.now() });
   if (cfToken) await writeCloudflareCreds(c.env, { token: cfToken, accountId: cfAccount });
   if (form?.get('allow') === '1' && c.ip && c.ip !== '0.0.0.0') {
@@ -214,11 +214,19 @@ async function changePasswords(c: Ctx, form: FormData | null): Promise<string> {
   const owner = String(form?.get('owner') ?? '');
   const friend = String(form?.get('friend') ?? '');
   if (owner && owner.length < MIN_PASSWORD) return `The owner password needs at least ${MIN_PASSWORD} characters.`;
-  if (friend && friend !== '-' && friend === owner) return 'The friend password must differ from the owner password.';
+  // The two passwords must stay different, against the new value when given and the stored one otherwise.
+  if (friend && friend !== '-') {
+    if (owner ? friend === owner : await verifyPassword(friend, stored.owner)) return 'The friend password must differ from the owner password.';
+  }
+  if (owner && !friend && stored.friend && (await verifyPassword(owner, stored.friend))) return 'The owner password must differ from the friend password.';
   const next = { ...stored, at: c.deps.now() };
   if (owner) next.owner = await hashPassword(owner);
   if (friend === '-') delete next.friend;
-  else if (friend) next.friend = await hashPassword(friend);
+  else if (friend) next.friend = await hashPassword(friend, next.owner);
+  else if (owner && next.friend) {
+    // Owner salt changed; the friend hash cannot be re-derived without the friend password, so a
+    // wrong guess costs two derivations until the friend password is set again.
+  }
   await writeAuth(c.env, next);
   c.invalidateRuntime();
   return 'ok';
@@ -269,7 +277,7 @@ async function settings(c: Ctx): Promise<Result> {
     } else if (action === 'share.create') {
       const result = await createShare(c, form);
       if (!result.startsWith('link:')) return [html(messagePage('Not created', result), 400), 'admin'];
-      return [new Response(null, { status: 303, headers: { location: `${c.url.origin}${SETTINGS_PATH}?ok=share&link=${encodeURIComponent(result.slice(5))}#shares`, 'cache-control': 'no-store' } }), 'admin'];
+      return renderSettings(c, now, { notice: 'share', newShareLink: result.slice(5) });
     } else if (action === 'share.revoke') {
       const id = String(form?.get('id') ?? '');
       if (!(await readShare(c.env, id))) return [html(messagePage('Not found', 'No such share.'), 404), 'admin'];
@@ -283,7 +291,7 @@ async function settings(c: Ctx): Promise<Result> {
       const token = String(form?.get('cfToken') ?? '').trim();
       const accountId = String(form?.get('cfAccount') ?? '').trim().toLowerCase();
       if (!token || !/^[0-9a-f]{32}$/.test(accountId)) return [html(messagePage('Not saved', 'A token and a 32-character account id are needed.'), 400), 'admin'];
-      if (c.env.CF_API_TOKEN && !(await readAuth(c.env))) return [html(messagePage('Not saved', 'CF_API_TOKEN is set in the secrets and takes precedence.'), 400), 'admin'];
+      if (rawTokenInSecrets(c)) return [html(messagePage('Not saved', 'CF_API_TOKEN is set in the secrets and takes precedence.'), 400), 'admin'];
       await writeCloudflareCreds(c.env, { token, accountId });
       c.invalidateRuntime();
       notice = 'cf-creds';
@@ -292,7 +300,11 @@ async function settings(c: Ctx): Promise<Result> {
       if (result !== 'ok') return [html(messagePage('Cloudflare', result), 400), 'admin'];
       notice = action === 'cf.list' ? 'cf-list' : 'cf-waf';
     } else if (action === 'runtime.reset') {
-      await clearRuntimeSettings(c.env);
+      // Hosts, access and limits go back to wicket.yaml; the IP list and zone ids created from the
+      // page are wiring, not settings, and stay (dropping them would silently end edge bans).
+      const doc = runtimeOverridesOf(await readRuntimeSettings(c.env));
+      if (doc.cloudflare && Object.keys(doc.cloudflare).length) await writeRuntimeSettings(c.env, { cloudflare: doc.cloudflare });
+      else await clearRuntimeSettings(c.env);
       c.invalidateRuntime();
       notice = 'runtime-reset';
     } else {
@@ -308,6 +320,11 @@ async function settings(c: Ctx): Promise<Result> {
     return [new Response(null, { status: 303, headers: { location: `${c.url.origin}${SETTINGS_PATH}?ok=${notice}`, 'cache-control': 'no-store' } }), 'admin'];
   }
 
+  return renderSettings(c, now, { notice: c.url.searchParams.get('ok') ?? undefined });
+}
+
+/** The settings page itself; `extras.newShareLink` is rendered once, straight from the POST that created it. */
+async function renderSettings(c: Ctx, now: number, extras: { notice?: string; newShareLink?: string }): Promise<Result> {
   const [policy, queues, lockdown, bans, rt, shares] = await Promise.all([resolvePolicy(c.env), queueStatus(c.env, now), readLockdown(c.env), listBans(c.env), resolveRuntime(c.env), listShares(c.env)]);
   const [cloudflare, stats] = await Promise.all([cloudflareStatus(c, rt.settings.listId, rt.overrides.cloudflare?.zoneId), c.env.CF_API_TOKEN && c.env.CF_ACCOUNT_ID ? hostStats(c.env, c.deps.fetch, rt.settings.analyticsDataset) : Promise.resolve({} as Record<string, HostStats>)]);
   const savedHosts = new Set(Object.keys(rt.overrides.hosts ?? {}).map((h) => h.toLowerCase()));
@@ -339,7 +356,7 @@ async function settings(c: Ctx): Promise<Result> {
     }),
   );
   const pages = Math.max(1, Math.ceil(ordered.length / RECENT_BANS));
-  const ok = c.url.searchParams.get('ok');
+  const ok = extras.notice;
   const NOTICES: Record<string, string> = {
     saved: 'Saved. Applies to the next event.',
     reset: 'Reset to the deploy-time config.',
@@ -383,7 +400,7 @@ async function settings(c: Ctx): Promise<Result> {
         shares,
         shareHosts: Object.keys(rt.hosts).sort(),
         shareDurations: Object.keys(SHARE_DURATIONS),
-        newShareLink: ok === 'share' ? (c.url.searchParams.get('link') ?? undefined) : undefined,
+        newShareLink: extras.newShareLink,
         passwords: c.auth.kind === 'plain' ? 'secrets' : 'kv',
         hasFriend: Boolean(c.auth.friend),
         policy,
@@ -432,7 +449,7 @@ async function saveHost(c: Ctx, action: 'host.save' | 'host.remove', form: FormD
     if (recipe && !(recipe in RECIPES)) return `Unknown recipe "${recipe}".`;
     const passthrough = String(form?.get('passthrough') ?? '');
     const entry: Record<string, unknown> = { mode };
-    if (mode === 'observe' && recipe) entry.recipe = recipe;
+    if (recipe && (mode === 'observe' || (mode === 'gated' && passthrough))) entry.recipe = recipe;
     if (mode === 'gated' && passthrough) {
       if (passthrough === 'custom') {
         const rule = parsePassthroughSpec(String(form?.get('spec') ?? ''));
@@ -446,7 +463,7 @@ async function saveHost(c: Ctx, action: 'host.save' | 'host.remove', form: FormD
     if (countries) entry.countries = countries;
     // Watch rules from wicket.yaml survive a mode/recipe change made here.
     const watch = hostTableOf(c.env.HOSTS_JSON)[host]?.watch;
-    if (mode === 'observe' && watch?.length) entry.watch = watch;
+    if (watch?.length && (mode === 'observe' || (mode === 'gated' && passthrough))) entry.watch = watch;
     hosts[host] = entry;
   }
   await writeRuntimeSettings(c.env, { ...doc, hosts });
@@ -522,19 +539,25 @@ const lines = (form: FormData | null, name: string): string[] =>
 /** Access section: allow lists, trust window, bypass prefixes → the runtime overrides document. */
 async function saveAccess(c: Ctx, form: FormData | null): Promise<string> {
   const allowIps = lines(form, 'allowIps');
-  for (const e of allowIps) if (!validAllowEntry(e)) return `"${e}" is not an IPv4/IPv6 address or CIDR.`;
+  for (const e of allowIps) {
+    if (!validAllowEntry(e)) return `"${e}" is not an IPv4/IPv6 address or CIDR.`;
+    const bits = e.includes('/') ? Number(e.split('/')[1]) : null;
+    if (bits !== null && bits < (e.includes(':') ? 32 : 8)) return `"${e}" would allow a large part of the internet without a password; use a narrower range.`;
+  }
   const allowDns = lines(form, 'allowDns').map((s) => s.toLowerCase());
   for (const n of allowDns) if (!validHostname(n)) return `"${n}" is not a hostname.`;
   const bypass = lines(form, 'bypass').map((s) => s.toLowerCase());
   for (const b of bypass) {
-    const host = b.split('/')[0]!;
+    const slash = b.indexOf('/');
+    const host = slash < 0 ? b : b.slice(0, slash);
+    if (slash < 0 || b.length === slash + 1) return `"${b}" must look like host/prefix with a prefix (host/ alone would open the whole host).`;
     if (!validHostname(host)) return `"${b}" must look like host/prefix.`;
     if (c.cfg.cookieDomain && host !== c.cfg.cookieDomain && !host.endsWith(`.${c.cfg.cookieDomain}`)) return `"${host}" is not under ${c.cfg.cookieDomain}.`;
   }
   const trustRaw = String(form?.get('trustSeconds') ?? '');
   const doc = runtimeOverridesOf(await readRuntimeSettings(c.env));
   const trustSeconds = trustRaw === 'custom' ? (doc.access?.trustSeconds ?? c.cfg.trustSeconds) : Number(trustRaw);
-  if (!Number.isInteger(trustSeconds) || trustSeconds < 0) return 'Trust window must be a number of seconds.';
+  if (!Number.isInteger(trustSeconds) || trustSeconds < 0 || trustSeconds > 30 * 86_400) return 'Trust window must be between 0 and 30 days.';
   await writeRuntimeSettings(c.env, { ...doc, access: { allowIps, allowDns, trustSeconds, bypass } });
   c.invalidateRuntime();
   return 'ok';
@@ -550,6 +573,7 @@ async function saveLimits(c: Ctx, form: FormData | null): Promise<string> {
     if (n === null || !Number.isFinite(n)) return `${f.label}: "${raw}" is not ${f.kind === 'duration' ? 'a duration (30s, 10m, 24h, 7d)' : 'a whole number'}.`;
     if (n < (f.key === 'signatureLimit' ? 0 : 1)) return `${f.label}: must be at least ${f.key === 'signatureLimit' ? 0 : 1}.`;
     if (f.kind === 'duration' && n > 30 * 86_400) return `${f.label}: at most 30 days.`;
+    if (f.kind === 'count' && n > 100_000) return `${f.label}: at most 100000.`;
     limits[f.key] = n;
   }
   const doc = runtimeOverridesOf(await readRuntimeSettings(c.env));
