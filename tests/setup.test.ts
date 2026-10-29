@@ -29,7 +29,7 @@ describe('first-run setup', () => {
     expect(await login.text()).toContain('not been set up yet');
     expect((await h.run(h.request('/__wicket/setup'))).status).toBe(403);
     expect((await h.run(h.request('/__wicket/setup?token=wrong'))).status).toBe(403);
-    const page = await h.run(h.request('/__wicket/setup?token=deploy-token'));
+    const page = await h.run(h.request('/__wicket/setup?token=deploy-token-0123456789'));
     expect(page.status).toBe(200);
     expect(await page.text()).toContain('name="password2"');
   });
@@ -63,7 +63,7 @@ describe('first-run setup', () => {
     expect(await h.kv.get('fail:203.0.113.9')).toBe('1');
 
     // Setup is gone, even with the token.
-    expect((await h.run(h.request('/__wicket/setup?token=deploy-token'))).status).toBe(404);
+    expect((await h.run(h.request('/__wicket/setup?token=deploy-token-0123456789'))).status).toBe(404);
     expect((await post(h, '/__wicket/setup', { token: 'deploy-token-0123456789', password: 'another-long-password', password2: 'another-long-password' })).status).toBe(404);
   });
 
