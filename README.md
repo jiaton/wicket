@@ -23,22 +23,28 @@ browser ──► Cloudflare edge ──► wicket (Worker, routed by hostname) 
 
 ## Setup
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jiaton/wicket)
+
+**One click**: the button copies the repository into your GitHub account, creates the KV namespace and deploys. It asks for one secret, `SETUP_TOKEN` (any random string, 16+ characters). Then, in the Worker's dashboard page: *Settings → Variables* set `ZONE` and `COOKIE_DOMAIN` to your zone (`example.com`); *Settings → Domains & Routes* add the route `*.example.com/*`; open `https://<any proxied host>/__wicket/setup?token=<your SETUP_TOKEN>` and pick the owner password. Everything else is on the settings page. (Before the route exists the setup page also answers on the Worker's `workers.dev` address.)
+
+**From a terminal** (the same result, with `wicket.yaml` as a reproducible base):
+
 Needs a Cloudflare zone, a Tunnel with proxied hostnames, Node 22+, and the `cf` CLI (`npm i -g cf && cf auth login`) or wrangler.
 
 ```sh
 git clone https://github.com/jiaton/wicket && cd wicket && npm install
 printf 'zone: example.com\nroutes: wildcard\n' > wicket.yaml   # 1. the only two lines you need (wicket.example.yaml documents the rest)
 npm run check                                              # 2. validates it, uploads nothing
-cf deploy                                                  # 3. deploy; prints a one-time setup link (wrangler: npm run config:wrangler && npx wrangler deploy)
+cf deploy                                                  # 3. deploy; prints a one-time setup link (wrangler: npm run deploy:yaml)
 ```
 
-4. Open the setup link: choose the owner password (and a friend password), keep your current address allow-listed, optionally paste a Cloudflare API token. You land on the settings page, where everything else lives: which hostnames are gated, observed, open or off; allow lists; limits; notifications. `routes: wildcard` routes every proxied subdomain through wicket, so adding a host is a form, not a deploy. Prefer explicit routes and secrets? List `hosts:` in `wicket.yaml`, put `OWNER_PASSWORD` and `COOKIE_SECRET` in a `secrets.json` and deploy with `cf deploy --secrets-file secrets.json`; the setup page then never appears (`setup: false` disables it outright).
+4. Open the setup link: choose the owner password (and a friend password), keep your current address allow-listed, optionally paste a Cloudflare API token. You land on the settings page, where everything else lives: which hostnames are gated, observed, open or off; allow lists; limits; notifications. `routes: wildcard` routes every proxied subdomain through wicket, so adding a host is a form, not a deploy. Prefer explicit routes and secrets? List `hosts:` in `wicket.yaml`, put `OWNER_PASSWORD` and `COOKIE_SECRET` in a `secrets.json` and deploy with `cf deploy --secrets-file secrets.json` (wrangler: `npm run deploy:yaml && npx wrangler secret bulk secrets.json -c wrangler.generated.jsonc`); the setup page then never appears (`setup: false` disables it outright).
 
 Then connect your Cloudflare account: create an API token (Account → *Analytics: Read*, *Filter Lists: Edit*; Zone → *Zone: Read*, *WAF: Edit*), paste it with your account id into the **Cloudflare** section of `/__wicket/settings` (or set `CF_API_TOKEN` / `CF_ACCOUNT_ID` as secrets): it checks the token, tells you if Analytics Engine still needs its one-time switch in the dashboard (*Workers & Pages → Analytics Engine*), and creates the IP list and the WAF rule for edge bans with one click each. Make your reverse proxy trust `Cf-Connecting-Ip`.
 
-> If you use secrets, never run `cf deploy` without `--secrets-file` afterwards (cf 1.0 beta uploads a version with no secrets; `npm run deploy` refuses for that reason). Passwords set on the setup page live in KV and survive every deploy. The KV namespace is created on the first deploy.
+> If you use secrets with the cf CLI, never run `cf deploy` without `--secrets-file` afterwards (cf 1.0 beta uploads a version with no secrets). `npm run deploy` is plain `wrangler deploy` with the committed route-less config; `npm run deploy:yaml` deploys what `wicket.yaml` says. Passwords set on the setup page live in KV and survive every deploy. The KV namespace is created on the first deploy.
 
-**No CLI?** Fork, then *Workers & Pages → Create → Continue with GitHub*: build command `npm run config:wrangler`, deploy command `npx wrangler deploy`, build variable `WICKET_YAML` = your `wicket.yaml` (text or base64). Add the secrets under the Worker's *Settings → Variables and Secrets*. *Sync fork* ships updates.
+**Workers Builds with your own `wicket.yaml`** (auto-redeploy on push, config outside the fork): fork, then *Workers & Pages → Create → Continue with GitHub*: build command `npm run config:wrangler`, deploy command `npx wrangler deploy -c wrangler.generated.jsonc`, build variable `WICKET_YAML` = your `wicket.yaml` (text or base64). Secrets under the Worker's *Settings → Variables and Secrets*, or the setup link from the build log. *Sync fork* ships updates.
 
 **Coding agent?** A clone plus "deploy wicket for zone X with hosts Y following README.md" is enough; it can do everything except `cf auth login`, the dashboard switches, and knowing your password. Rules it must keep are in [`AGENTS.md`](AGENTS.md).
 

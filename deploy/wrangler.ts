@@ -1,7 +1,9 @@
 /**
- * Writes `wrangler.jsonc` from the config for people who deploy with wrangler instead of
- * the cf CLI, locally (`npm run config:wrangler && npx wrangler deploy`) or as the build
- * command of a Workers Builds project (config in the `WICKET_YAML` build variable).
+ * Writes `wrangler.generated.jsonc` from the config for people who deploy with wrangler instead
+ * of the cf CLI, locally (`npm run deploy:yaml`) or as the build command of a Workers Builds
+ * project (config in the `WICKET_YAML` build variable; deploy command
+ * `npx wrangler deploy -c wrangler.generated.jsonc`). The committed `wrangler.jsonc` is the
+ * route-less config for the Deploy-to-Cloudflare button and is never touched here.
  *
  * The file is generated and git-ignored; edit wicket.yaml, not the output.
  *
@@ -74,6 +76,6 @@ const wranglerConfig = {
   analytics_engine_datasets: [{ binding: 'TRAFFIC', dataset: cfg.cloudflare.analyticsDataset }],
 };
 
-const out = resolve(process.cwd(), 'wrangler.jsonc');
+const out = resolve(process.cwd(), 'wrangler.generated.jsonc');
 writeFileSync(out, `// Generated from ${source} by deploy/wrangler.ts — do not edit.\n${JSON.stringify(wranglerConfig, null, 2)}\n`);
 console.log(`wrote ${out}: ${Object.keys(cfg.hosts).length} routes, crons ${toCrons(cfg).join(' | ')}`);

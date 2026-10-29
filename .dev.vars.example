@@ -1,0 +1,4 @@
+# Secrets for a Deploy-to-Cloudflare or `wrangler deploy` deployment (the button asks for these).
+# SETUP_TOKEN: any random string (for example the output of `openssl rand -hex 16`). It unlocks
+# /__wicket/setup once, where you choose the owner password; nothing else is needed up front.
+SETUP_TOKEN=

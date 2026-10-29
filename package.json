@@ -8,8 +8,9 @@
   "repository": "github:jiaton/wicket",
   "scripts": {
     "dev": "cf dev",
-    "deploy": "echo 'Do NOT run bare `cf deploy`: in cf 1.0.0-beta.5 it uploads a version with no secrets. Use `cf deploy --secrets-file secrets.json` (see README) or `npm run config:wrangler && npx wrangler deploy`.' >&2 && exit 1",
+    "deploy": "wrangler deploy",
     "config:wrangler": "node deploy/wrangler.ts",
+    "deploy:yaml": "node deploy/wrangler.ts && wrangler deploy -c wrangler.generated.jsonc",
     "signatures:update": "node deploy/signatures.ts",
     "check": "tsc --noEmit && cf deploy --dry-run",
     "test": "vitest run",

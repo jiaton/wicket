@@ -1,0 +1,26 @@
+// The Deploy-to-Cloudflare / plain `wrangler deploy` config: a Worker with no routes yet, set up in
+// the browser afterwards. People who keep their config in wicket.yaml use `npm run config:wrangler`,
+// which writes wrangler.generated.jsonc from it (routes, hosts, limits) — this file stays untouched.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wicket",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  // Reachable at <name>.<account>.workers.dev so the setup page can be opened before any route exists.
+  "workers_dev": true,
+  "observability": { "enabled": true },
+  "triggers": { "crons": ["*/5 * * * *", "17 * * * *"] },
+  "vars": {
+    // Your zone (example.com): set it in the dashboard after deploying (Settings → Variables), then add
+    // the route *.example.com/* (Settings → Domains & Routes). Hosts, limits and everything else are
+    // configured on /__wicket/settings.
+    "ZONE": "",
+    "COOKIE_DOMAIN": "",
+    "DEFAULT_MODE": "gated",
+    "SETUP_ENABLED": "1",
+    "ANALYTICS_DATASET": "wicket_traffic",
+    "RECONCILE_CRON": "17 * * * *"
+  },
+  "kv_namespaces": [{ "binding": "STORE" }],
+  "analytics_engine_datasets": [{ "binding": "TRAFFIC", "dataset": "wicket_traffic" }]
+}

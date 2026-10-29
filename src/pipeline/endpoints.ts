@@ -131,7 +131,11 @@ const MIN_PASSWORD = 12;
 async function setup(c: Ctx): Promise<Result> {
   if (!c.auth.setupOpen) return [html(messagePage('Not found', ''), 404), 'reject'];
   const token = String((c.req.method === 'POST' ? (await c.req.clone().formData().catch(() => null))?.get('token') : c.url.searchParams.get('token')) ?? '');
-  if (!c.env.SETUP_TOKEN || !safeEqual(token, c.env.SETUP_TOKEN)) {
+  // A token shorter than 16 characters (or the example's empty value) is not a secret: refuse until one is set.
+  if (!c.env.SETUP_TOKEN || c.env.SETUP_TOKEN.length < 16) {
+    return [html(messagePage('Setup', 'Set SETUP_TOKEN to a random string of at least 16 characters (Worker → Settings → Variables and Secrets), then open /__wicket/setup?token=<that string>.'), 503), 'reject'];
+  }
+  if (!safeEqual(token, c.env.SETUP_TOKEN)) {
     return [html(messagePage('Setup', 'This page needs the setup link printed when the Worker was deployed.'), 403), 'reject'];
   }
   const view = { host: c.url.hostname, action: SETUP_PATH, token, ip: c.ip, cloudflare: Boolean(c.env.CF_API_TOKEN) };

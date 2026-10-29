@@ -6,6 +6,8 @@ dist
 *.log
 .cloudflare
 wicket.yaml
-wrangler.jsonc
+wrangler.generated.jsonc
 secrets.json
-.dev.vars*
+.dev.vars
+.dev.vars.*
+!.dev.vars.example

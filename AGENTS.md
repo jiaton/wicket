@@ -7,7 +7,7 @@ Cloudflare Worker: one shared password (plus host-scoped API tokens) in front of
 ```
 cloudflare.config.ts  cf CLI config, generated from wicket.yaml at evaluation time (no literals in here)
 deploy/               build-time only, runs in Node, never bundled: config.ts (YAML → validated config →
-                      vars/routes/crons), wrangler.ts (writes wrangler.jsonc)
+                      vars/routes/crons), wrangler.ts (writes wrangler.generated.jsonc; the committed wrangler.jsonc is the route-less Deploy-button config)
 src/index.ts          Worker entry: fetch = pipeline, scheduled = the five-minute or the hourly job (by cron string)
 src/pipeline/         request handling as an ordered list of steps (handler.ts: STEPS)
   context.ts          Ctx (everything a step may need), Deps (injected fetch + clock), Outcome, Step
