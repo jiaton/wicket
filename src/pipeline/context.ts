@@ -63,6 +63,12 @@ export interface Ctx {
   trust: () => void;
   /** Drops this isolate's cached runtime settings (after a save on the settings page). */
   invalidateRuntime: () => void;
+  /**
+   * KV write health for this isolate. When a write fails (quota, outage) the gate fails
+   * closed for a while instead of letting uncounted guesses through: `down()` is true and
+   * password/token entry from untrusted addresses is refused.
+   */
+  kv: { down: () => boolean; failed: (what: string, err: unknown) => void };
 }
 
 export type Result = [Response, Outcome];

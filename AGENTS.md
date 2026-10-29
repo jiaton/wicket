@@ -27,7 +27,7 @@ src/cron/             index.ts (jobs, run-once locks, request-path fallback tick
                       credentials, guessing, app-logins, scanning, new-country, quiet-hours
 src/cloudflare/       REST clients: lists.ts (IP list), analytics.ts (SQL)
 src/config/           parsing only: env.ts (field names), settings.ts (vars), hosts.ts (HOSTS_JSON), tokens.ts (API_TOKENS), channels.ts (NOTIFY_JSON), notifications.ts (policy kinds/deliveries)
-src/core/             pure functions, no I/O: crypto.ts, credentials.ts (carriers, cookie, CSRF), ip.ts, counters.ts
+src/core/             pure functions, no I/O: crypto.ts, credentials.ts (carriers, cookie, CSRF), ip.ts (addressKey: IPv6 → /64, allow-list matching), paths.ts (traversal-safe prefix checks), counters.ts (SlidingCounter, RecentSet, HealthFlag)
 src/recipes/          data: per-app watch rules (index.ts), scanner signatures (signatures.ts + signatures.generated.ts from OWASP CRS via `npm run signatures:update`)
 src/ui/               pages.ts (login, messages, shell), settings.ts (owner settings page)
 tests/                vitest in plain Node; helpers.ts fakes KV, Analytics and the network
@@ -57,6 +57,8 @@ Rules that keep it layered:
 
 - TypeScript with `erasableSyntaxOnly` (no parameter properties, no enums). Comments, docs and UI strings in English.
 - Every ban goes through `banAddress`/`recordBan`, which refuse trusted addresses (`store/trust.ts`), write KV exactly once and remember request-path bans in `c.recentBans` (step 3 consults it before KV, whose cached misses otherwise cause repeat bans); every allow-list decision goes through `c.allowed()` / `createAllowCheck`. Do not call `ipAllowed` or `writeBan` directly from a new feature. A ban's request reports its kind as the outcome (`ban` password/token, `ban-scan`, `ban-origin`); `cron/addresses.ts` folds on that, so a new ban kind needs a new outcome, not a reuse of `ban`.
+- Addresses: `c.ip` is already the key (`addressKey`: IPv6 collapsed to its /64); store functions normalise again, so pass whatever you have. Any prefix check on a path goes through `core/paths.ts` (`underPrefix`), never bare `startsWith`.
+- A KV write in the request path that would be security-relevant if lost (counters, bans) is wrapped: on failure call `c.kv.failed(what, err)` and fail closed (`failClosed`), never return the "not counted" answer. Reads may fail open.
 - KV writes are the scarce resource on the free plan (1,000 a day; the five-minute lock alone is 288). A new feature that writes per request or per event needs a reason in its comment and, where possible, isolate memory (`core/counters.ts`) or a single aggregated key instead.
 - Fail closed: missing secrets disable login (503); malformed `HOSTS_JSON` means `gated`; unknown tokens never pass. `deploy/config.ts` rejects a bad `wicket.yaml` so the deploy stops.
 - Never forward wicket credentials to the origin (`stripCredentials`). Never log secrets.

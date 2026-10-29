@@ -41,10 +41,11 @@ describe('safeEqual', () => {
 });
 
 describe('unban signatures', () => {
-  it('bind ip and expiry', async () => {
-    const sig = await signUnban('s', '1.2.3.4', 99);
-    expect(sig).toBe(await signUnban('s', '1.2.3.4', 99));
-    expect(sig).not.toBe(await signUnban('s', '1.2.3.5', 99));
-    expect(sig).not.toBe(await signUnban('s', '1.2.3.4', 100));
+  it('bind ip, expiry and the ban timestamp', async () => {
+    const sig = await signUnban('s', '1.2.3.4', 99, 5);
+    expect(sig).toBe(await signUnban('s', '1.2.3.4', 99, 5));
+    expect(sig).not.toBe(await signUnban('s', '1.2.3.5', 99, 5));
+    expect(sig).not.toBe(await signUnban('s', '1.2.3.4', 100, 5));
+    expect(sig).not.toBe(await signUnban('s', '1.2.3.4', 99, 6));
   });
 });

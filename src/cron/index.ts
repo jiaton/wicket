@@ -28,7 +28,14 @@ export async function hourlyJob(env: Env, doFetch: Fetch, now: number): Promise<
  */
 export async function runOnce(env: Env, name: 'tick' | 'reconcile', windowSeconds: number, job: () => Promise<unknown>): Promise<boolean> {
   // A little shorter than the window so a cron that is a few seconds early still wins.
-  if (!(await acquireJobLock(env, name, windowSeconds - 30))) return false;
+  let locked = false;
+  try {
+    locked = await acquireJobLock(env, name, windowSeconds - 30);
+  } catch (err) {
+    console.error(`job ${name}: lock failed (KV)`, String(err));
+    return false;
+  }
+  if (!locked) return false;
   await job();
   return true;
 }

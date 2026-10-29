@@ -86,6 +86,31 @@ export function compileExtra(paths: string | undefined, agents: string | undefin
 }
 
 /**
+ * Files no web application serves to its users on purpose. This short list, not the whole
+ * CRS restricted-files list, is what counts on observe hosts that answered 2xx: the CRS
+ * list has `config.json`, `.gitignore` and `.editorconfig` in it, which code-hosting and
+ * media apps serve legitimately (jellyfin-web fetches `/web/config.json` on every load).
+ * Matched against the last path segment (files) or any segment (directories).
+ */
+export const SENSITIVE_FILES = ['.env', '.env.local', '.env.production', '.env.bak', '.env.backup', '.env.save', '.env.old', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', '.bash_history', '.htpasswd', 'wp-config.php', 'wp-config.php.bak', '.ds_store', '.npmrc', '.pypirc', '.netrc', '.pgpass', '.git-credentials', 'credentials', 'credentials.json', 'docker-compose.yml', '.dockerenv'];
+export const SENSITIVE_DIRS = ['.git', '.svn', '.hg', '.aws', '.ssh', '.idea', '.vscode'];
+
+/** The sensitive-file signature of a path answered 2xx, or null. */
+export function matchSensitive(pathname: string): string | null {
+  let path = pathname.toLowerCase();
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    /* keep the raw path */
+  }
+  const segments = path.split('/').filter(Boolean);
+  const last = segments.at(-1) ?? '';
+  if (SENSITIVE_FILES.includes(last) || (last.startsWith('.env.') && !last.endsWith('.js') && !last.endsWith('.ts'))) return `file ${last}`;
+  for (const d of SENSITIVE_DIRS) if (segments.slice(0, -1).includes(d)) return `file /${d}/`;
+  return null;
+}
+
+/**
  * Returns a short description of the matching signature, or null. Path checks are
  * case-insensitive substring checks against a lower-cased, decoded path.
  */

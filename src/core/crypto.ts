@@ -55,6 +55,6 @@ export async function verifySession(
 }
 
 /** Signed, expiring parameters for the one-click Unban / Lift-lockdown link. */
-export async function signUnban(secret: string, ip: string, exp: number): Promise<string> {
-  return hmacHex(`${secret}\nunban`, `${ip}.${exp}`);
+export async function signUnban(secret: string, ip: string, exp: number, at: number): Promise<string> {
+  return hmacHex(`${secret}\nunban`, `${ip}.${exp}.${at}`);
 }

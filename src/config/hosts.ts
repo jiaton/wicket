@@ -1,4 +1,5 @@
 import type { Env } from './env';
+import { underPrefix } from '../core/paths';
 
 /** A watch rule: the origin's answer to a matching request counts as a login failure. */
 export interface WatchRule {
@@ -34,11 +35,17 @@ export interface Passthrough {
   params: string[];
   /** Path prefixes the rule is limited to; empty = any path. */
   paths: string[];
+  /** Origin statuses that mean "the app rejected the credential" (counted toward `limits.origin`). */
+  status: number[];
 }
+
+export const PASSTHROUGH_DEFAULT_STATUS = [401];
+/** Where APIs, MCP servers and app back ends live; the `api` preset is limited to these so static pages and the app's own login stay gated. */
+export const API_PATHS = ['/api/', '/v1/', '/v2/', '/rest/', '/graphql', '/mcp', '/sse', '/rpc', '/ws'];
 
 /** `passthrough: api` — what most APIs, MCP servers and mobile apps send. */
 export const PASSTHROUGH_PRESETS: Record<string, Passthrough> = {
-  api: { headers: ['authorization', 'x-api-key', 'x-access-token'], cookies: [], params: ['token'], paths: [] },
+  api: { headers: ['authorization', 'x-api-key', 'x-access-token'], cookies: [], params: ['token'], paths: API_PATHS, status: PASSTHROUGH_DEFAULT_STATUS },
 };
 
 export interface HostConfig {
@@ -46,7 +53,7 @@ export interface HostConfig {
   /** Name of a built-in recipe (src/recipes) whose rules are prepended to `watch`. */
   recipe?: string;
   watch: WatchRule[];
-  /** Gated hosts only: requests with the app's own credential go to the app. */
+  /** Gated hosts only: requests with the app's own credential go to the app; `recipe`/`watch` then apply to those requests. */
   passthrough?: Passthrough;
 }
 
@@ -57,7 +64,7 @@ const GATED: HostConfig = { mode: 'gated', watch: [] };
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : []);
 
 export function passthroughOf(raw: unknown): Passthrough | undefined {
-  if (typeof raw === 'string') return PASSTHROUGH_PRESETS[raw];
+  if (typeof raw === 'string') return Object.hasOwn(PASSTHROUGH_PRESETS, raw) ? PASSTHROUGH_PRESETS[raw] : undefined;
   if (!raw || typeof raw !== 'object') return undefined;
   const r = raw as Record<string, unknown>;
   const p: Passthrough = {
@@ -65,6 +72,7 @@ export function passthroughOf(raw: unknown): Passthrough | undefined {
     cookies: strings(r.cookies),
     params: strings(r.params),
     paths: strings(r.paths),
+    status: Array.isArray(r.status) && r.status.every((n) => typeof n === 'number') && r.status.length ? (r.status as number[]) : PASSTHROUGH_DEFAULT_STATUS,
   };
   return p.headers.length || p.cookies.length || p.params.length ? p : undefined;
 }
@@ -119,7 +127,7 @@ export function watchMatches(rules: WatchRule[], method: string, pathname: strin
 
 /** Does the request carry one of the app's own credentials, on a path the rule covers? */
 export function carriesAppCredential(p: Passthrough, req: Request, url: URL): boolean {
-  if (p.paths.length && !p.paths.some((prefix) => url.pathname.startsWith(prefix))) return false;
+  if (p.paths.length && !p.paths.some((prefix) => underPrefix(url.pathname, prefix))) return false;
   if (p.headers.some((h) => req.headers.has(h))) return true;
   if (p.params.some((name) => url.searchParams.has(name))) return true;
   if (p.cookies.length) {

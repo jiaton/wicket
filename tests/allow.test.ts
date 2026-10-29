@@ -18,7 +18,8 @@ describe('allow_dns', () => {
   it('resolves A and AAAA over DoH and tolerates failures', async () => {
     const net = fakeNetwork(dns({ 'home.example.test': ['203.0.113.9', '2001:db8::9'] }));
     expect(await resolveAddresses(net.doFetch, 'home.example.test')).toEqual(['203.0.113.9', '2001:db8::9']);
-    expect(await resolveAddresses(fakeNetwork(dns({}, true)).doFetch, 'home.example.test')).toEqual([]);
+    expect(await resolveAddresses(fakeNetwork(dns({}, true)).doFetch, 'home.example.test')).toBeNull(); // resolver unreachable
+    expect(await resolveAddresses(net.doFetch, 'gone.example.test')).toEqual([]); // answered, no records
   });
 
   it('caches the answer for five minutes and keeps it when the resolver fails', async () => {

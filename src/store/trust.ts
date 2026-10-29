@@ -1,4 +1,5 @@
 import type { Env } from '../config/env';
+import { addressKey } from '../core/ip';
 
 /**
  * KV key `trust:<ip>`: an address that recently held a valid owner session. Trusted addresses
@@ -7,7 +8,7 @@ import type { Env } from '../config/env';
  * NAT address that cannot be allow-listed. Written at owner login and refreshed (throttled)
  * while an owner cookie is in use; expires after `trust_window`.
  */
-const key = (ip: string) => `trust:${ip}`;
+const key = (ip: string) => `trust:${addressKey(ip)}`;
 
 export async function isTrusted(env: Env, ip: string): Promise<boolean> {
   return (await env.STORE.get(key(ip))) !== null;

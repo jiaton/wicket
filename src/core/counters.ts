@@ -35,6 +35,21 @@ export class SlidingCounter {
   }
 }
 
+/** A per-isolate "something is broken until T" flag (KV writes failing → fail closed for a while). */
+export class HealthFlag {
+  private downUntil = 0;
+  private readonly now: () => number;
+  constructor(now: () => number) {
+    this.now = now;
+  }
+  markDown(ms: number): void {
+    this.downUntil = Math.max(this.downUntil, this.now() + ms);
+  }
+  isDown(): boolean {
+    return this.downUntil > this.now();
+  }
+}
+
 /** Per-isolate set of keys that expire: "seen in the last N ms". Bounded like SlidingCounter. */
 export class RecentSet {
   private readonly until = new Map<string, number>();

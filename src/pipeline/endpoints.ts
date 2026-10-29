@@ -15,7 +15,7 @@ import { isTrusted, markTrusted } from '../store/trust';
 import { loginPage, messagePage } from '../ui/pages';
 import { settingsPage, type BanRow, type HostRow } from '../ui/settings';
 import type { Ctx, Result } from './context';
-import { registerFailure } from './failures';
+import { failClosed, registerFailure } from './failures';
 import { html } from './respond';
 
 const LOGIN_ACTION = `${ENDPOINT_PREFIX}login`;
@@ -28,6 +28,8 @@ export async function endpoints(c: Ctx): Promise<Result | null> {
 
   if (route === 'unban' && c.req.method === 'GET') return unban(c);
   if (route === 'logout') {
+    // Same-origin only: another site must not be able to sign the owner out with an <img>.
+    if (!sameOrigin(c.req)) return [html(messagePage('Rejected', 'Cross-site request.'), 403), 'reject'];
     return [html(messagePage('Signed out', 'The password cookie was cleared.'), 200, { 'set-cookie': setCookie('', c.cfg, 0) }), 'logout'];
   }
   if (route === 'login' && c.req.method === 'POST') return login(c);
@@ -51,6 +53,9 @@ async function login(c: Ctx): Promise<Result> {
     return [html(messagePage('Locked', 'Too many wrong passwords from the internet lately; password entry is paused for a while. Existing sessions keep working.'), 403), 'locked'];
   }
   if (!sameOrigin(c.req)) return [html(messagePage('Rejected', 'Cross-site login is not allowed.'), 403), 'reject'];
+  // KV writes failing (quota, outage): wrong passwords could not be counted, so none are accepted
+  // from the internet at large; allow-listed and trusted addresses are never counted anyway.
+  if (!allowed && c.kv.down()) return failClosed('password');
 
   const form = await c.req.formData().catch(() => null);
   const password = String(form?.get('password') ?? '');
@@ -282,13 +287,18 @@ async function liftLockdownAndTell(c: Ctx, how: string): Promise<void> {
 /** The signed link from a notification: lifts one address's ban, or the lockdown when `ip=*`. */
 async function unban(c: Ctx): Promise<Result> {
   const { env, cfg, url } = c;
+  if (!env.COOKIE_SECRET) return [html(messagePage('Unavailable', 'The Worker has no secrets configured.'), 503), 'reject'];
   const ip = url.searchParams.get('ip') ?? '';
   const exp = Number(url.searchParams.get('exp'));
+  const at = Number(url.searchParams.get('at'));
   const sig = url.searchParams.get('sig') ?? '';
   const now = Math.floor(c.deps.now() / 1000);
-  if (!ip || !Number.isFinite(exp) || exp < now || !safeEqual(sig, await signUnban(env.COOKIE_SECRET, ip, exp))) {
+  if (!ip || !Number.isFinite(exp) || !Number.isFinite(at) || exp < now || !safeEqual(sig, await signUnban(env.COOKIE_SECRET, ip, exp, at))) {
     return [html(messagePage('Invalid link', 'This unban link is invalid or has expired.'), 400), 'reject'];
   }
+  // The link lifts the ban it was sent for, once: a later ban of the same address needs its own link.
+  const current = ip === LOCKDOWN_IP ? await readLockdown(env) : await readBan(env, ip);
+  if (!current || current.at !== at) return [html(messagePage('Nothing to lift', ip === LOCKDOWN_IP ? 'There is no lockdown this link belongs to.' : `${ip} is not banned by the ban this link belongs to.`), 410), 'reject'];
   if (ip === LOCKDOWN_IP) {
     await liftLockdownAndTell(c, `Clicked from ${c.ip}`);
     return [html(messagePage('Lockdown lifted', 'Password entry is open again.'), 200), 'unban'];

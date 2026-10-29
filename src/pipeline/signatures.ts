@@ -1,5 +1,5 @@
 import { banAddress } from '../actions/ban';
-import { compileExtra, matchSignature, type SignatureSets } from '../recipes/signatures';
+import { compileExtra, matchSensitive, matchSignature, type SignatureSets } from '../recipes/signatures';
 import { messagePage } from '../ui/pages';
 import type { Ctx, Result } from './context';
 import { html } from './respond';
@@ -25,9 +25,8 @@ export type SignatureScope = 'all' | 'files';
 
 /** The signature this request matches within `scope`, or null. */
 export function scannerSignature(c: Ctx, scope: SignatureScope = 'all'): string | null {
-  const sig = matchSignature(c.url.pathname, scope === 'all' ? (c.req.headers.get('user-agent') ?? '') : '', extraSets(c));
-  if (!sig) return null;
-  return scope === 'all' || sig.startsWith('file ') ? sig : null;
+  if (scope === 'files') return matchSensitive(c.url.pathname);
+  return matchSignature(c.url.pathname, c.req.headers.get('user-agent') ?? '', extraSets(c));
 }
 
 /**

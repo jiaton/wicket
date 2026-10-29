@@ -30,7 +30,7 @@ describe('banSlowScanners', () => {
     expect(tg).toHaveLength(1);
     const body = tg[0]!.body as { text: string; reply_markup: { inline_keyboard: { url: string }[][] } };
     expect(body.text).toContain('banned 1.1.1.1 (SG)');
-    expect(body.reply_markup.inline_keyboard[0]![0]!.url).toMatch(/^https:\/\/nas\.x\/__wicket\/unban\?ip=1\.1\.1\.1&exp=\d+&sig=/);
+    expect(body.reply_markup.inline_keyboard[0]![0]!.url).toMatch(/^https:\/\/nas\.x\/__wicket\/unban\?ip=1\.1\.1\.1&exp=\d+&at=\d+&sig=/);
     expect(await kv.get('ban:2.2.2.2')).toBeNull();
     expect(await kv.get('ban:10.0.0.1')).toBeNull();
   });

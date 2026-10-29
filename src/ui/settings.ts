@@ -1,6 +1,7 @@
 import { HOST_MODES, type HostMode } from '../config/hosts';
 import { DIGEST_CHOICES, KIND_LABELS, POLICY_KINDS, type Delivery, type NotifyPolicy } from '../config/notifications';
 import type { BanKind } from '../store/bans';
+import { brand, page } from './pages';
 
 const MODE_HINTS: Record<HostMode, string> = {
   gated: 'password page',
@@ -8,7 +9,6 @@ const MODE_HINTS: Record<HostMode, string> = {
   open: 'forwarded untouched',
   off: 'maintenance page',
 };
-import { brand, page } from './pages';
 
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
@@ -121,7 +121,7 @@ export function settingsPage(v: SettingsView): string {
     ? v.recent
         .map(
           (b) =>
-            `<tr><td><code>${esc(b.ip)}</code> <small>${esc(b.country)}</small><br><small>${esc(BAN_KIND_LABELS[b.kind])} · ${esc(b.host)} · ${esc(ago(v.now - b.at))}</small></td>` +
+            `<tr><td><code>${esc(b.ip)}</code> <small>${esc(b.country)}</small><br><small>${esc(BAN_KIND_LABELS[b.kind] ?? String(b.kind))} · ${esc(b.host)} · ${esc(ago(v.now - b.at))}</small></td>` +
             `<td><form method="post" action="${esc(v.action)}" class="inline"><input type="hidden" name="ip" value="${esc(b.ip)}"><button type="submit" name="action" value="unban" class="secondary small">Unban</button></form></td></tr>`,
         )
         .join('')

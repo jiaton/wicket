@@ -109,3 +109,17 @@ describe('signature strikes', () => {
     expect(await h.kv.get('ban:198.51.100.9')).toBeNull();
   });
 });
+
+describe('2xx scope is the short sensitive-file list, not the whole CRS list', () => {
+  it('leaves config.json and dotfiles that apps serve alone, still bans /.env and /.git/', async () => {
+    const h = harness({ HOSTS_JSON: JSON.stringify({ 'media.example.test': { mode: 'observe', recipe: 'jellyfin' } }) }, {});
+    const probe = (path: string) => h.run(h.request(path, { ip: '198.51.100.9', host: 'media.example.test' }));
+    for (let i = 0; i < 4; i++) expect((await probe('/web/config.json')).status).toBe(200);
+    for (const p of ['/.gitignore', '/.editorconfig', '/src/.vscode-settings', '/envelope/.env.js']) expect((await probe(p)).status).toBe(200);
+    expect(await h.kv.get('ban:198.51.100.9')).toBeNull();
+    expect((await probe('/.env')).status).toBe(200);
+    expect((await probe('/app/.git/config')).status).toBe(200);
+    expect((await probe('/config/.env.production')).status).toBe(200);
+    expect(await h.kv.get('ban:198.51.100.9')).not.toBeNull();
+  });
+});

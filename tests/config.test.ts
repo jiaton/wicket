@@ -76,7 +76,7 @@ describe('wicket.yaml', () => {
   it('rejects hosts outside the zone, unknown recipes and watch rules on gated hosts', () => {
     expect(bad('zone: example.test\nhosts:\n  nas.other.test: gated')).toThrow(/not inside zone/);
     expect(bad('zone: example.test\nhosts:\n  x.example.test: { mode: observe, recipe: nope }')).toThrow(/unknown recipe/);
-    expect(bad('zone: example.test\nhosts:\n  x.example.test: { mode: gated, recipe: immich }')).toThrow(/only apply to mode: observe/);
+    expect(bad('zone: example.test\nhosts:\n  x.example.test: { mode: gated, recipe: immich }')).toThrow(/apply to mode: observe/);
     expect(bad('zone: example.test\nhosts:\n  x.example.test: sometimes')).toThrow(/mode must be/);
     expect(bad('zone: example.test\nhosts: {}')).toThrow(/at least one hostname/);
     expect(bad('hosts:\n  x.example.test: gated')).toThrow(/zone is required/);
@@ -118,8 +118,9 @@ describe('wicket.yaml', () => {
 describe('passthrough', () => {
   it('accepts the api preset or a mapping on gated hosts and compiles it into HOSTS_JSON', () => {
     const cfg = parseConfig(parse(`${minimal}\n  api.example.test: { passthrough: api }\n  app.example.test:\n    passthrough: { headers: [Authorization, X-Session], cookies: [sid], paths: [/api/] }`), RECIPE_NAMES);
-    expect(cfg.hosts['api.example.test']!.passthrough).toEqual({ headers: ['authorization', 'x-api-key', 'x-access-token'], cookies: [], params: ['token'], paths: [] });
-    expect(cfg.hosts['app.example.test']!.passthrough).toEqual({ headers: ['authorization', 'x-session'], cookies: ['sid'], params: [], paths: ['/api/'] });
+    expect(cfg.hosts['api.example.test']!.passthrough).toMatchObject({ headers: ['authorization', 'x-api-key', 'x-access-token'], cookies: [], params: ['token'], status: [401] });
+    expect(cfg.hosts['api.example.test']!.passthrough!.paths).toContain('/api/');
+    expect(cfg.hosts['app.example.test']!.passthrough).toEqual({ headers: ['authorization', 'x-session'], cookies: ['sid'], params: [], paths: ['/api/'], status: [401] });
     const env = makeEnv(new FakeKV(), new FakeAnalytics(), toVars(cfg));
     expect(hostConfig(env, 'app.example.test')).toMatchObject({ mode: 'gated', passthrough: { cookies: ['sid'], paths: ['/api/'] } });
     expect(hostConfig(env, 'nas.example.test').passthrough).toBeUndefined();

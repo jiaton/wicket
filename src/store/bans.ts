@@ -1,4 +1,5 @@
 import type { Env } from '../config/env';
+import { addressKey } from '../core/ip';
 
 /**
  * Everything wicket keeps in KV, in one place. Keys:
@@ -17,9 +18,10 @@ export interface BanRecord {
 }
 
 export const LOCKDOWN_IP = '*';
-const banKey = (ip: string) => `ban:${ip}`;
-const failKey = (ip: string) => `fail:${ip}`;
-const originFailKey = (ip: string) => `ofail:${ip}`;
+// Every per-address key goes through addressKey (IPv6 → /64), whatever the caller passes.
+const banKey = (ip: string) => `ban:${addressKey(ip)}`;
+const failKey = (ip: string) => `fail:${addressKey(ip)}`;
+const originFailKey = (ip: string) => `ofail:${addressKey(ip)}`;
 const GLOBAL_FAIL_KEY = 'gfail';
 const LOCKDOWN_KEY = 'lockdown';
 
@@ -71,7 +73,7 @@ export async function readBan(env: Env, ip: string): Promise<BanRecord | null> {
  * Bans written before the summary went into KV metadata (2026-10) lack it; rewrite up to
  * `max` of them per call so listings can sort and count. Returns how many were rewritten.
  */
-export async function backfillBanMetadata(env: Env, max = 100): Promise<number> {
+export async function backfillBanMetadata(env: Env, max = 20): Promise<number> {
   let n = 0;
   for (const b of await listBans(env)) {
     if (b.at !== undefined || n >= max) continue;

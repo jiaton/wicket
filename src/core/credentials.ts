@@ -43,6 +43,8 @@ export interface PresentedToken {
   value: string;
   /** True for carriers that can only mean "a token for wicket or the app": a mismatch is a strike. */
   explicit: boolean;
+  /** `wicket`: X-Wicket-Token / ?wicket_token= (a guess at wicket itself, counts toward the lockdown); `app`: an app-style header or ?token=; `bearer`: Authorization, never punished. */
+  carrier: 'wicket' | 'app' | 'bearer';
 }
 
 /**
@@ -51,17 +53,17 @@ export interface PresentedToken {
  */
 export function presentedToken(req: Request, url: URL): PresentedToken | null {
   const header = req.headers.get(TOKEN_HEADER);
-  if (header) return { value: header, explicit: true };
+  if (header) return { value: header, explicit: true, carrier: 'wicket' };
   const param = url.searchParams.get(TOKEN_PARAM);
-  if (param) return { value: param, explicit: true };
+  if (param) return { value: param, explicit: true, carrier: 'wicket' };
   for (const name of APP_TOKEN_HEADERS) {
     const v = req.headers.get(name);
-    if (v) return { value: v, explicit: true };
+    if (v) return { value: v, explicit: true, carrier: 'app' };
   }
   const appParam = url.searchParams.get(APP_TOKEN_PARAM);
-  if (appParam) return { value: appParam, explicit: true };
+  if (appParam) return { value: appParam, explicit: true, carrier: 'app' };
   const auth = req.headers.get('authorization') ?? '';
-  if (auth.toLowerCase().startsWith('bearer ')) return { value: auth.slice(7).trim(), explicit: false };
+  if (auth.toLowerCase().startsWith('bearer ')) return { value: auth.slice(7).trim(), explicit: false, carrier: 'bearer' };
   return null;
 }
 
@@ -70,9 +72,10 @@ export function setCookie(value: string, cfg: Settings, maxAge: number): string 
   return `${COOKIE_NAME}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax${domain}`;
 }
 
-/** Only same-origin paths are valid redirect targets after login. */
+/** Only same-origin paths are valid redirect targets after login (the settings page is the one wicket path allowed). */
 export function safeNext(next: string | null): string {
-  if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\') || next.startsWith(ENDPOINT_PREFIX)) return '/';
+  if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\') || /[\u0000-\u001f\u007f]/.test(next)) return '/';
+  if (next.startsWith(ENDPOINT_PREFIX)) return next === `${ENDPOINT_PREFIX}settings` ? next : '/';
   return next;
 }
 

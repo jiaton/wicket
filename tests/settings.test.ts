@@ -177,7 +177,7 @@ describe('hosts on the settings page', () => {
     const add = await post(h, owner, { action: 'host.save', host: 'API.example.test', mode: 'gated', recipe: '', passthrough: 'api' });
     expect(add.status).toBe(303);
     expect(add.headers.get('location')).toContain('ok=host-saved');
-    expect((await h.run(h.request('/v1', { host: 'api.example.test', headers: { authorization: 'Bearer x', accept: '*/*' } }))).status).toBe(200);
+    expect((await h.run(h.request('/v1/items', { host: 'api.example.test', headers: { authorization: 'Bearer x', accept: '*/*' } }))).status).toBe(200);
     expect(h.analytics.outcomes().at(-1)).toBe('app');
 
     // Switch the observe host off, then open.
@@ -199,7 +199,7 @@ describe('hosts on the settings page', () => {
 
     await post(h, owner, { action: 'runtime.reset' });
     expect(await h.kv.get('settings:runtime')).toBeNull();
-    expect((await h.run(h.request('/v1', { host: 'api.example.test', headers: { authorization: 'Bearer x', accept: '*/*' } }))).status).toBe(401);
+    expect((await h.run(h.request('/v1/items', { host: 'api.example.test', headers: { authorization: 'Bearer x', accept: '*/*' } }))).status).toBe(401);
   });
 
   it('rejects hostnames outside the cookie domain, unknown recipes and modes', async () => {

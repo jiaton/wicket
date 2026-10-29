@@ -11,14 +11,17 @@ const UNBAN_LINK_SECONDS = 7 * 86_400;
 /** How long an isolate remembers its own bans (covers KV's eventual consistency with margin). */
 export const RECENT_BAN_MS = 10 * 60_000;
 
-/** Signed, expiring one-click link that lifts a ban (`ip`) or the lockdown (`*`), served from `host`. */
-export async function unbanLinkFor(env: Env, now: number, host: string, ip: string): Promise<string> {
+/**
+ * Signed, expiring one-click link that lifts a ban (`ip`) or the lockdown (`*`), served from
+ * `host`. `at` is the record's timestamp: the link is only good for that ban, not for a later
+ * one of the same address. Without a cookie secret there is no link (nothing to sign with).
+ */
+export async function unbanLinkFor(env: Env, now: number, host: string, ip: string, at: number): Promise<string | null> {
+  if (!env.COOKIE_SECRET) return null;
   const exp = Math.floor(now / 1000) + UNBAN_LINK_SECONDS;
-  const sig = await signUnban(env.COOKIE_SECRET, ip, exp);
-  return `https://${host}/__wicket/unban?ip=${encodeURIComponent(ip)}&exp=${exp}&sig=${sig}`;
+  const sig = await signUnban(env.COOKIE_SECRET, ip, exp, at);
+  return `https://${host}/__wicket/unban?ip=${encodeURIComponent(ip)}&exp=${exp}&at=${at}&sig=${sig}`;
 }
-
-export const unbanLink = (c: Ctx, ip: string) => unbanLinkFor(c.env, c.deps.now(), c.url.hostname, ip);
 
 export interface BanInput {
   ip: string;
@@ -54,13 +57,18 @@ async function announce(env: Env, deps: Deps, cfg: Settings, b: BanInput, now: n
       severity: b.kind === 'scan' ? 'info' : 'warn',
       title: `${cfg.siteName}: banned ${b.ip} (${b.country})`,
       text: `${reason} on ${b.host}.${edge ? ' Also added to the Cloudflare IP list.' : ''}`,
-      link: { text: 'Unban', url: await unbanLinkFor(env, now, b.host, b.ip) },
+      ...(await linkTo(env, now, b.host, b.ip, now, 'Unban')),
       ip: b.ip,
       cc: b.country,
       host: b.host,
     },
     now,
   );
+}
+
+async function linkTo(env: Env, now: number, host: string, ip: string, at: number, text: string): Promise<{ link?: { text: string; url: string } }> {
+  const url = await unbanLinkFor(env, now, host, ip, at);
+  return url ? { link: { text, url } } : {};
 }
 
 /**
@@ -89,22 +97,29 @@ export async function banAddress(c: Ctx, ip: string, kind: BanKind, fails: numbe
   if (await isTrusted(c.env, ip)) return false;
   const b: BanInput = { ip, host: c.url.hostname, country: c.cc, kind, fails, ...(reason ? { reason } : {}) };
   const now = c.deps.now();
+  // The isolate remembers the ban even if KV refuses the record below (quota, outage): the
+  // address stays blocked here for RECENT_BAN_MS, and the owner is told about the failure.
   c.recentBans.add(ip, RECENT_BAN_MS);
-  await persist(c.env, b, now);
+  try {
+    await persist(c.env, b, now);
+  } catch (err) {
+    c.kv.failed('ban record', err);
+  }
   c.exec.waitUntil(announce(c.env, c.deps, c.cfg, b, now));
   return true;
 }
 
 /** Pause password/token entry site-wide and tell the owner. */
 export async function lockDown(c: Ctx, fails: number, minutes: number): Promise<void> {
-  await startLockdown(c.env, { at: c.deps.now(), host: c.url.hostname, fails }, c.cfg.lockdownSeconds);
+  const at = c.deps.now();
+  await startLockdown(c.env, { at, host: c.url.hostname, fails }, c.cfg.lockdownSeconds);
   c.exec.waitUntil(
     emit(c.env, c.deps.fetch, {
       kind: 'lockdown',
       severity: 'critical',
       title: `${c.cfg.siteName}: lockdown`,
       text: `${fails} wrong passwords/tokens from changing addresses within ${minutes} min (last on ${c.url.hostname}). Password entry is paused for ${Math.round(c.cfg.lockdownSeconds / 60)} min; sessions and API tokens still work.`,
-      link: { text: 'Lift lockdown', url: await unbanLink(c, LOCKDOWN_IP) },
-    }, c.deps.now()),
+      ...(await linkTo(c.env, at, c.url.hostname, LOCKDOWN_IP, at, 'Lift lockdown')),
+    }, at),
   );
 }

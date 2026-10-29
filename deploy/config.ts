@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse } from 'yaml';
 
-import { HOST_MODES, isHostMode, PASSTHROUGH_PRESETS, type HostMode, type Passthrough, type WatchRule } from '../src/config/hosts.ts';
+import { HOST_MODES, isHostMode, PASSTHROUGH_DEFAULT_STATUS, PASSTHROUGH_PRESETS, type HostMode, type Passthrough, type WatchRule } from '../src/config/hosts.ts';
 import { DEFAULT_POLICY, isDelivery, isPolicyKind, type NotifyPolicy } from '../src/config/notifications.ts';
 
 export const DEFAULT_FILE = 'wicket.yaml';
@@ -166,10 +166,10 @@ function hostEntry(v: unknown, host: string, zone: string, recipes: ReadonlySet<
   if (!isHostMode(mode)) fail(`hosts.${host}.mode must be one of ${HOST_MODES.join(', ')}`);
   const recipe = r.recipe === undefined ? undefined : str(r.recipe, `hosts.${host}.recipe`);
   if (recipe && recipes && !recipes.has(recipe)) fail(`hosts.${host}.recipe: unknown recipe "${recipe}" (known: ${[...recipes].join(', ')})`);
-  if (mode !== 'observe' && (recipe || r.watch !== undefined)) fail(`hosts.${host}: recipe/watch only apply to mode: observe`);
   if (mode !== 'gated' && r.passthrough !== undefined) fail(`hosts.${host}: passthrough only applies to mode: gated (other modes already forward everything or nothing)`);
-  const watch = watchRules(r.watch, host);
   const passthrough = passthroughRule(r.passthrough, host);
+  if (mode !== 'observe' && !passthrough && (recipe || r.watch !== undefined)) fail(`hosts.${host}: recipe/watch apply to mode: observe or to a gated host with passthrough`);
+  const watch = watchRules(r.watch, host);
   return { mode, ...(recipe ? { recipe } : {}), ...(watch?.length ? { watch } : {}), ...(passthrough ? { passthrough } : {}) };
 }
 
@@ -188,7 +188,9 @@ function passthroughRule(v: unknown, host: string): Passthrough | undefined {
     cookies: r.cookies === undefined ? [] : strings(r.cookies, `hosts.${host}.passthrough.cookies`),
     params: r.params === undefined ? [] : strings(r.params, `hosts.${host}.passthrough.params`),
     paths: r.paths === undefined ? [] : strings(r.paths, `hosts.${host}.passthrough.paths`),
+    status: r.status === undefined ? PASSTHROUGH_DEFAULT_STATUS : (r.status as number[]),
   };
+  if (!Array.isArray(p.status) || !p.status.length || p.status.some((n) => typeof n !== 'number')) fail(`hosts.${host}.passthrough.status must be a list of status codes`);
   for (const h of p.headers) if (h === 'cookie' || h === 'host') fail(`hosts.${host}.passthrough.headers: "${h}" cannot be a credential carrier`);
   for (const path of p.paths) if (!path.startsWith('/')) fail(`hosts.${host}.passthrough.paths: "${path}" must start with /`);
   if (!p.headers.length && !p.cookies.length && !p.params.length) fail(`hosts.${host}.passthrough needs at least one of headers, cookies, params`);
@@ -241,7 +243,7 @@ export function parseConfig(doc: unknown, recipes: ReadonlySet<string> | null = 
     zone,
     worker: str(doc.worker, 'worker', 'wicket'),
     siteName: str(doc.site_name, 'site_name', zone),
-    cookieDomain: str(doc.cookie_domain, 'cookie_domain', zone),
+    cookieDomain: strOpt(doc.cookie_domain, 'cookie_domain', zone),
     cookieDays: num(doc.cookie_days, 'cookie_days', 365),
     hosts,
     routes,

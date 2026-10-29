@@ -26,7 +26,7 @@ export async function findAlerts(env: Env, doFetch: Fetch, now: number): Promise
   const cfg = (await resolveRuntime(env)).settings;
   const query = (q: string) => sql(env, doFetch, q);
   const rows: Row[] = await query(
-    `SELECT blob3 AS ip, blob4 AS country, blob5 AS outcome, blob1 AS host, SUM(_sample_interval) AS n, SUM(IF(double1 >= 400, _sample_interval, 0)) AS errors FROM ${cfg.analyticsDataset} WHERE ${WINDOW} GROUP BY ip, country, outcome, host ORDER BY n DESC LIMIT 400`,
+    `SELECT blob3 AS ip, blob4 AS country, blob5 AS outcome, blob1 AS host, SUM(_sample_interval) AS n, SUM(IF(double1 IN (400, 404, 405), _sample_interval, 0)) AS errors FROM ${cfg.analyticsDataset} WHERE ${WINDOW} GROUP BY ip, country, outcome, host ORDER BY n DESC LIMIT 400`,
   );
   const addresses = foldAddresses(rows);
   // Act first (slow scanner bans), then observe: detectors skip what was just banned.

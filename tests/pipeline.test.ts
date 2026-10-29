@@ -102,7 +102,7 @@ describe('three strikes', () => {
     const msg = tg[0]!.body as { text: string; reply_markup: { inline_keyboard: { url: string }[][] } };
     expect(msg.text).toContain('203.0.113.5');
     const link = msg.reply_markup.inline_keyboard[0]![0]!.url;
-    expect(link).toMatch(/^https:\/\/nas\.example\.test\/__wicket\/unban\?ip=203\.0\.113\.5&exp=\d+&sig=[0-9a-f]{64}$/);
+    expect(link).toMatch(/^https:\/\/nas\.example\.test\/__wicket\/unban\?ip=203\.0\.113\.5&exp=\d+&at=\d+&sig=[0-9a-f]{64}$/);
 
     // Banned: even the right password is refused, and any page is 403.
     expect((await h.login('owner-pw')).status).toBe(403);
@@ -274,7 +274,7 @@ describe('rotating-IP brute force', () => {
     expect(await locked.text()).toContain('paused');
     const tokenTry = await h.run(h.request('/x', { ip: '6.6.6.6', headers: { 'x-wicket-token': 'whatever', accept: '*/*' } }));
     expect(tokenTry.status).toBe(403);
-    expect(await h.kv.get('fail:6.6.6.6')).toBeNull();
+    expect(await h.kv.get('fail:6.6.6.6')).toBe('1'); // still a strike: tokens are not guessable for free during a lockdown
 
     // Existing sessions and allow-listed addresses are unaffected.
     const h2 = harness({ ALLOW_IPS: '9.9.9.9' });
@@ -467,8 +467,10 @@ describe('ban bookkeeping', () => {
     expect(await h.kv.get('lockdown')).toBeNull();
     expect(await h.kv.get('gfail')).toBeNull();
     expect(await h.kv.get('fail:10.0.0.1')).toBe('1');
-    // The same keys at an ordinary path are the rotating-IP case and do count.
+    // App-style carriers never move the global counter, wherever they are sent; wicket's own carrier does.
     for (const i of [1, 2, 3, 4]) await h.run(h.request('/api/items', { ip: `10.0.1.${i}`, headers: { 'x-api-key': 'test', accept: '*/*' } }));
+    expect(await h.kv.get('lockdown')).toBeNull();
+    for (const i of [1, 2, 3, 4]) await h.run(h.request('/api/items', { ip: `10.0.2.${i}`, headers: { 'x-wicket-token': 'guess', accept: '*/*' } }));
     expect(await h.kv.get('lockdown')).not.toBeNull();
   });
 });
@@ -534,5 +536,105 @@ describe('pass-through of the app\'s own credential', () => {
     // On a host without pass-through the same header is still a wicket strike.
     expect((await h.run(h.request('/x', { ip: '198.51.100.4', headers: { 'x-api-key': 'nope', accept: '*/*' } }))).status).toBe(401);
     expect(await h.kv.get('fail:198.51.100.4')).toBe('1');
+  });
+});
+
+describe('hardening', () => {
+  const V6A = '2600:8800:618b:e000:c8d0:eaa:e91d:aa0b';
+  const V6B = '2600:8800:618b:e000:20d6:f674:41b3:6a3a'; // same /64, another privacy address
+
+  it('IPv6 visitors share counters, bans and trust per /64', async () => {
+    const h = harness({ CF_API_TOKEN: 't', CF_ACCOUNT_ID: 'acc', CF_LIST_ID: 'list' });
+    await h.login('nope', {}, { ip: V6A });
+    await h.login('nope', {}, { ip: V6B });
+    expect(await h.kv.get('fail:2600:8800:618b:e000::/64')).toBe('2');
+    expect((await h.login('nope', {}, { ip: V6A })).status).toBe(403);
+    expect((await h.run(h.request('/', { ip: V6B }))).status).toBe(403); // the whole /64 is banned
+    const cf = h.net.sent.find((s) => s.url.includes('rules/lists/list/items') && s.init?.method === 'POST');
+    expect(cf?.body).toEqual([{ ip: '2600:8800:618b:e000::/64', comment: expect.any(String) }]); // what Cloudflare lists accept
+    const h2 = harness();
+    await h2.login('owner-pw', {}, { ip: V6A });
+    expect(await h2.kv.get('trust:2600:8800:618b:e000::/64')).toBe('1');
+    for (let i = 0; i < 5; i++) expect((await h2.login('nope', {}, { ip: V6B })).status).toBe(401); // household device, never counted
+  });
+
+  it('encoded dot segments never earn a bypass', async () => {
+    const h = harness({ BYPASS_PREFIXES: 'nas.example.test/hooks/' });
+    expect((await h.run(h.request('/.well-known/acme-challenge/token', { headers: { accept: '*/*' } }))).status).toBe(200);
+    for (const p of ['/.well-known/acme-challenge/..%2f..%2fadmin', '/hooks/..%5c..%5cadmin', '/hooks/../admin', '/hooks/%2e%2e/x']) {
+      expect((await h.run(h.request(p, { headers: { accept: '*/*' } }))).status).toBe(401);
+    }
+    expect((await h.run(h.request('/hooks/github', { headers: { accept: '*/*' } }))).status).toBe(200);
+  });
+
+  it('fails closed while KV writes fail: no uncounted guessing, one alert, allow-listed unaffected', async () => {
+    const h = harness({ ALLOW_IPS: '198.51.100.1' });
+    const realPut = h.kv.put.bind(h.kv);
+    h.kv.put = async (key: string) => {
+      if (key.startsWith('fail:') || key === 'gfail' || key.startsWith('ban:')) throw new Error('KV PUT failed: 429 quota');
+    };
+    expect((await h.login('nope', {}, { ip: '203.0.113.7' })).status).toBe(503);
+    expect((await h.login('owner-pw', {}, { ip: '203.0.113.7' })).status).toBe(503); // no oracle while down
+    expect((await h.login('nope', {}, { ip: '203.0.113.8' })).status).toBe(503);
+    expect((await h.login('owner-pw', {}, { ip: '198.51.100.1' })).status).toBe(303); // allow-listed: never counted, so never refused
+    const alerts = h.net.telegram().map((m) => (m.body as { text: string }).text).filter((t) => t.includes('KV writes failing'));
+    expect(alerts).toHaveLength(1);
+    expect(h.analytics.outcomes().filter((o) => o === 'locked')).toHaveLength(3);
+    h.kv.put = realPut;
+    h.advance(6 * 60_000);
+    expect((await h.login('owner-pw', {}, { ip: '203.0.113.7' })).status).toBe(303);
+  });
+
+  it('an unban link lifts only the ban it was sent for, and nothing without a secret', async () => {
+    const h = harness();
+    for (let i = 0; i < 3; i++) await h.login('nope', {}, { ip: '203.0.113.9' });
+    const first = new URL((h.net.telegram().at(-1)!.body as { reply_markup: { inline_keyboard: { url: string }[][] } }).reply_markup.inline_keyboard[0]![0]!.url);
+    expect((await h.run(h.request(first.pathname + first.search))).status).toBe(200);
+    expect(await h.kv.get('ban:203.0.113.9')).toBeNull();
+    expect((await h.run(h.request(first.pathname + first.search))).status).toBe(410); // nothing to lift
+    h.advance(1000);
+    for (let i = 0; i < 3; i++) await h.login('nope', {}, { ip: '203.0.113.9' });
+    expect(await h.kv.get('ban:203.0.113.9')).not.toBeNull();
+    expect((await h.run(h.request(first.pathname + first.search))).status).toBe(410); // old link, new ban
+    const noSecret = harness({ COOKIE_SECRET: '' });
+    expect((await noSecret.run(noSecret.request('/__wicket/unban?ip=1.1.1.1&exp=9999999999&at=1&sig=x'))).status).toBe(503);
+  });
+
+  it('logout needs a same-origin request', async () => {
+    const h = harness();
+    const cookie = cookieFrom(await h.login('owner-pw'));
+    expect((await h.run(h.request('/__wicket/logout', { headers: { cookie, 'sec-fetch-site': 'cross-site' } }))).status).toBe(403);
+    expect((await h.run(h.request('/__wicket/logout', { headers: { cookie, 'sec-fetch-site': 'same-origin' } }))).status).toBe(200);
+  });
+
+  it('pass-through: configurable rejection statuses and recipes on gated hosts; wicket.yaml-style rule', async () => {
+    const hosts = JSON.stringify({ 'api.example.test': { mode: 'gated', passthrough: { headers: ['authorization'], status: [401, 403] }, recipe: 'jellyseerr' } });
+    const h = harness({ HOSTS_JSON: hosts, ORIGIN_FAIL_LIMIT: '2' });
+    const { createHandler } = await import('../src/pipeline/handler');
+    const gate = createHandler({
+      fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+        const req = input instanceof Request ? input : new Request(String(input), init);
+        return new URL(req.url).hostname === 'api.example.test' ? new Response('no', { status: 403 }) : h.net.doFetch(input, init);
+      },
+      now: () => h.time(),
+    });
+    const { ctx } = await import('./helpers');
+    const call = async (path: string, init: RequestInit = {}) => {
+      const c = ctx();
+      const res = await gate(h.request(path, { ip: '198.51.100.3', host: 'api.example.test', ...init }), h.env, c);
+      await c.settle();
+      return res;
+    };
+    expect((await call('/anything', { headers: { authorization: 'Bearer x', accept: '*/*' } })).status).toBe(403); // the app's answer, counted (403 in status)
+    expect(await h.kv.get('ofail:198.51.100.3')).toBe('1');
+    expect((await call('/api/v1/auth/local', { method: 'POST', headers: { authorization: 'Bearer x', accept: '*/*' }, body: '{}' })).status).toBe(403); // recipe rule also matches
+    expect(await h.kv.get('ban:198.51.100.3')).toContain('"kind":"origin"');
+  });
+
+  it('analytics rows keep whole paths for rejected requests and two segments for forwarded ones', async () => {
+    const { analyticsPath } = await import('../src/pipeline/handler');
+    expect(analyticsPath('/api/webhook/supersecret', 'observe')).toBe('/api/webhook/…');
+    expect(analyticsPath('/api/webhook/supersecret', 'reject')).toBe('/api/webhook/supersecret');
+    expect(analyticsPath('/short', 'pass')).toBe('/short');
   });
 });

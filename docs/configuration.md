@@ -12,7 +12,7 @@ worker: wicket                    # Worker name
 routes: explicit                  # explicit = one route per host below; wildcard = *.example.com/*, unlisted hosts get default_mode
 default_mode: gated               # wildcard routes only: gated | observe | open | off for hosts not listed
 site_name: example.com            # prefix of every notification; default = zone
-cookie_domain: example.com        # one login per domain; default = zone
+cookie_domain: example.com        # one login per domain; default = zone. "" = host-only cookie, one login per host
 cookie_days: 365
 
 hosts:
@@ -23,7 +23,7 @@ hosts:
     mode: observe
     watch: [{ path: /api/unlock, methods: [POST], status: [401] }]
 
-allow_ips: [203.0.113.7]          # pass without a password (login page still available); your home IP
+allow_ips: [203.0.113.7]          # pass without a password (login page still available); your home IP. IPv4, IPv4 CIDR, IPv6 (matches its /64) or IPv6 CIDR
 allow_dns: []                     # DDNS names resolved every 5 min, same effect as allow_ips
 trust_window: 24h                 # an address that logged in as owner is immune to counting/bans this long; 0 = off
 bypass: [nas.example.com/hooks/]  # host/prefix that passes without credentials
@@ -103,14 +103,18 @@ Most apps you would gate already validate a token of their own (an API key, a be
 
 ```yaml
 hosts:
-  api.example.com: { passthrough: api }        # preset: Authorization, X-API-Key, x-access-token, ?token=
+  api.example.com: { passthrough: api }        # preset: Authorization, X-API-Key, x-access-token, ?token=, on API paths only
   app.example.com:
     passthrough:
       headers: [authorization, x-session]      # header names
       cookies: [sid]                           # the app's session cookie
       params: [token]                          # query parameters
-      paths: [/api/, /mcp]                     # optional: only on these prefixes
+      paths: [/api/, /mcp]                     # optional: only on these prefixes (empty = any path)
+      status: [401, 403]                       # what "the app rejected the credential" looks like; default [401]
+    recipe: jellyseerr                         # optional: the app's login rule also counts for pass-through requests
 ```
+
+The `api` preset covers `/api/`, `/v1/`, `/v2/`, `/rest/`, `/graphql`, `/mcp`, `/sse`, `/rpc` and `/ws`; anything else stays gated. An app that answers 403 or 400 to bad credentials needs `status` (or its recipe), or its rejections are never counted.
 
 What this costs: anyone can add such a header and reach the app's authentication code, exactly as on an observe host. The app's own login must therefore be sound; wicket adds the ban after five rejections. A stale token in a polling client is five 401s away from a ban, so keep `limits.origin` at five or more. Owner-trusted and allow-listed addresses are never banned this way.
 
@@ -193,6 +197,10 @@ Severities: scanner bans, unbans, reconcile changes and traffic digests are `inf
 ## fail2ban companion
 
 Hosts that must stay direct (media servers, a KVM) can keep fail2ban. `contrib/fail2ban/` has an action that pushes each ban into the same Cloudflare IP list. Its items are left alone by wicket's reconcile (only items whose comment starts with `wicket ` are managed).
+
+## When KV writes fail
+
+On the free plan KV allows 1,000 writes a day; a busy scanning day uses about 500. If a write fails, the Worker refuses password and token entry from the internet for five minutes (503), keeps sessions, allow-listed and trusted addresses working, remembers new bans in memory, and sends one critical message. Nothing is accepted that could not be counted. Workers Paid ($5/month) lifts the limit.
 
 ## Limits
 
