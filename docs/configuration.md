@@ -2,7 +2,7 @@
 
 Everything lives in `wicket.yaml` (compiled into the Worker at deploy time, validated: an unknown recipe, a host outside the zone or a typo in a mode stops the deploy) and in the secrets. Durations accept `30s`, `10m`, `24h`, `7d`.
 
-Hosts and the notification policy can also be changed on the owner-only settings page (`/__wicket/settings`) without a redeploy: those changes are stored in KV, layer over the file, and *Reset* returns to it. A host must still be routed to the Worker; with `routes: wildcard` every subdomain is, so adding a host is a form on that page.
+Hosts, access lists, limits and the notification policy can also be changed on the owner-only settings page (`/__wicket/settings`) without a redeploy: those changes are stored in KV, layer over the file (a saved section replaces that section of the file, it does not merge), and *Reset* returns to it. A host must still be routed to the Worker; with `routes: wildcard` every subdomain is, so adding a host is a form on that page.
 
 Host modes: `gated` (password page unless a cookie, token or pass-through credential is present), `observe` (forwarded, the app's own login watched, scanners banned), `open` (forwarded untouched, bans still apply; a host that only wants analytics), `off` (503 maintenance page).
 

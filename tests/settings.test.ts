@@ -212,3 +212,55 @@ describe('hosts on the settings page', () => {
     expect(await h.kv.get('settings:runtime')).toBeNull();
   });
 });
+
+describe('access and limits on the settings page', () => {
+  const cookieOf = (res: Response) => (res.headers.get('set-cookie') ?? '').split(';')[0]!;
+  const post = (h: ReturnType<typeof harness>, cookie: string, fields: Record<string, string>) =>
+    h.run(h.request('/__wicket/settings', { method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' }, body: new URLSearchParams(fields) }));
+
+  it('saves allow lists, trust and bypass; they apply at once and validate', async () => {
+    const h = harness({ ALLOW_IPS: '198.51.100.1' });
+    const owner = cookieOf(await h.login('owner-pw'));
+    let page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('name="allowIps"');
+    expect(page).toContain('>198.51.100.1</textarea>');
+
+    const bad = await post(h, owner, { action: 'access.save', allowIps: '203.0.113.9\nnot-an-ip', allowDns: '', trustSeconds: '3600', bypass: '' });
+    expect(bad.status).toBe(400);
+    expect(await h.kv.get('settings:runtime')).toBeNull();
+
+    const ok = await post(h, owner, { action: 'access.save', allowIps: '203.0.113.0/24\n2001:db8:1:2::1', allowDns: 'Home.Example.Test', trustSeconds: '3600', bypass: 'nas.example.test/hooks/' });
+    expect(ok.headers.get('location')).toContain('ok=access-saved');
+    expect((await h.run(h.request('/', { ip: '203.0.113.77', headers: { accept: '*/*' } }))).status).toBe(200); // allowed by the new CIDR
+    expect((await h.run(h.request('/', { ip: '198.51.100.1', headers: { accept: '*/*' } }))).status).toBe(401); // the wicket.yaml entry is replaced, not merged
+    expect((await h.run(h.request('/hooks/x', { ip: '203.0.113.200', headers: { accept: '*/*' } }))).status).toBe(200); // bypass
+    await h.login('owner-pw', {}, { ip: '203.0.113.200' });
+    expect(h.kv.store.get('trust:203.0.113.200')!.expires).toBe(h.time() + 3_600_000);
+    page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('2001:db8:1:2::1</textarea>');
+    expect(page).toContain('home.example.test</textarea>');
+    expect(page).toContain('<option value="3600" selected>');
+    expect((await post(h, owner, { action: 'access.save', allowIps: '', allowDns: '', trustSeconds: '0', bypass: 'other.test/x' })).status).toBe(400);
+  });
+
+  it('saves limits with durations and rejects nonsense', async () => {
+    const h = harness();
+    const owner = cookieOf(await h.login('owner-pw'));
+    const page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('name="limit.failWindowSeconds" value="1d"');
+    expect(page).toContain('name="limit.failLimit" value="3"');
+    const fields: Record<string, string> = { action: 'limits.save', 'limit.failLimit': '5', 'limit.failWindowSeconds': '12h', 'limit.failGlobalLimit': '10', 'limit.failGlobalWindowSeconds': '10m', 'limit.lockdownSeconds': '1h', 'limit.scanLimit': '100', 'limit.scanWindowSeconds': '60s', 'limit.scanningLimit': '15', 'limit.signatureLimit': '0', 'limit.signatureWindowSeconds': '10m', 'limit.originFailLimit': '5', 'limit.originFailWindowSeconds': '600' };
+    expect((await post(h, owner, fields)).headers.get('location')).toContain('ok=limits-saved');
+    const { resolveRuntime } = await import('../src/runtime');
+    const s = (await resolveRuntime(h.env)).settings;
+    expect(s.failLimit).toBe(5);
+    expect(s.failWindowSeconds).toBe(43_200);
+    expect(s.scanningLimit).toBe(15);
+    expect(s.signatureLimit).toBe(0);
+    expect(s.originFailWindowSeconds).toBe(600);
+    for (let i = 0; i < 4; i++) expect((await h.login('nope', {}, { ip: '203.0.113.9' })).status).toBe(401); // five now, not three
+    expect((await post(h, owner, { ...fields, 'limit.scanLimit': 'lots' })).status).toBe(400);
+    expect((await post(h, owner, { ...fields, 'limit.failLimit': '0' })).status).toBe(400);
+    expect((await post(h, owner, { ...fields, 'limit.lockdownSeconds': '90d' })).status).toBe(400);
+  });
+});

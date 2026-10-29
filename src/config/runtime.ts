@@ -1,3 +1,4 @@
+import { ipv6ToBigInt } from '../core/ip';
 import { hostEntryOf, hostTableOf, type HostTable } from './hosts';
 import type { Settings } from './settings';
 
@@ -99,6 +100,49 @@ export function applyOverrides(base: Settings, o: RuntimeOverrides): Settings {
   if (o.limits) for (const k of LIMIT_KEYS) if (o.limits[k] !== undefined) s[k] = o.limits[k]!;
   return s;
 }
+
+/** `90`, `90s`, `10m`, `24h`, `7d` → seconds; null when malformed. */
+export function parseDuration(v: string): number | null {
+  const m = v.trim().match(/^(\d+)\s*([smhd])?$/);
+  if (!m) return null;
+  const units: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86_400 };
+  return Number(m[1]) * units[m[2] ?? 's']!;
+}
+
+/** Human form of a seconds value for the settings page: `3600` → `1h`. */
+export function formatDuration(seconds: number): string {
+  if (seconds % 86_400 === 0) return `${seconds / 86_400}d`;
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+  if (seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${seconds}s`;
+}
+
+/** Labels and grouping for the limits form; `window` keys take durations, the rest counts. */
+export const LIMIT_FIELDS: { key: LimitKey; label: string; kind: 'count' | 'duration' }[] = [
+  { key: 'failLimit', label: 'Wrong passwords/tokens per address before a ban', kind: 'count' },
+  { key: 'failWindowSeconds', label: '… counted within', kind: 'duration' },
+  { key: 'failGlobalLimit', label: 'Failures from any address before a lockdown', kind: 'count' },
+  { key: 'failGlobalWindowSeconds', label: '… counted within', kind: 'duration' },
+  { key: 'lockdownSeconds', label: 'Lockdown length', kind: 'duration' },
+  { key: 'scanLimit', label: 'Anonymous probes per address (burst) before a ban', kind: 'count' },
+  { key: 'scanWindowSeconds', label: '… counted within', kind: 'duration' },
+  { key: 'scanningLimit', label: 'Probes per address in the five-minute analysis before a ban', kind: 'count' },
+  { key: 'signatureLimit', label: 'Known scanner paths/agents per address before a ban (0 = off)', kind: 'count' },
+  { key: 'signatureWindowSeconds', label: '… counted within', kind: 'duration' },
+  { key: 'originFailLimit', label: "Failed logins at the app (observe / pass-through) before a ban", kind: 'count' },
+  { key: 'originFailWindowSeconds', label: '… counted within', kind: 'duration' },
+];
+
+/** An allow-list entry the page accepts: IPv4, IPv4 CIDR, IPv6, IPv6 CIDR. */
+export function validAllowEntry(s: string): boolean {
+  const [net, bits] = s.split('/');
+  if (!net) return false;
+  if (net.includes(':')) return ipv6ToBigInt(net) !== null && (bits === undefined || (/^\d{1,3}$/.test(bits) && Number(bits) <= 128));
+  if (!/^(\d{1,3})(\.\d{1,3}){3}$/.test(net) || net.split('.').some((p) => Number(p) > 255)) return false;
+  return bits === undefined || (/^\d{1,2}$/.test(bits) && Number(bits) <= 32);
+}
+
+export const validHostname = (s: string): boolean => HOSTNAME.test(s);
 
 /** Deploy-time host table with runtime entries replacing or adding hosts. */
 export function applyHostOverrides(base: HostTable, o: RuntimeOverrides): HostTable {

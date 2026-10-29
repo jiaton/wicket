@@ -1,4 +1,5 @@
 import { HOST_MODES, type HostMode } from '../config/hosts';
+import { formatDuration, LIMIT_FIELDS, type LimitKey } from '../config/runtime';
 import { DIGEST_CHOICES, KIND_LABELS, POLICY_KINDS, type Delivery, type NotifyPolicy } from '../config/notifications';
 import type { BanKind } from '../store/bans';
 import { brand, page } from './pages';
@@ -52,6 +53,8 @@ export interface SettingsView {
   defaultMode: HostMode;
   /** True when any runtime override (hosts, access, limits) is saved. */
   runtimeOverridden: boolean;
+  access: { allowIps: string[]; allowDns: string[]; trustSeconds: number; bypass: string[]; saved: boolean };
+  limits: { values: Record<LimitKey, number>; saved: boolean };
   policy: NotifyPolicy;
   source: 'defaults' | 'config' | 'saved';
   /** Channels in use with their thresholds and digest queues; secrets never reach the page. */
@@ -148,16 +151,46 @@ export function settingsPage(v: SettingsView): string {
         .join('')
     : '<tr><td><small>No hosts configured; every routed host gets the default mode.</small></td></tr>';
 
+  const TRUST_CHOICES: [string, string][] = [['0', 'off'], ['3600', '1 hour'], ['21600', '6 hours'], ['86400', '24 hours'], ['604800', '7 days']];
+  const trustCurrent = TRUST_CHOICES.some(([s]) => Number(s) === v.access.trustSeconds) ? String(v.access.trustSeconds) : 'custom';
+  const trustOptions: [string, string][] = trustCurrent === 'custom' ? [...TRUST_CHOICES, ['custom', `${formatDuration(v.access.trustSeconds)} (from wicket.yaml)`]] : TRUST_CHOICES;
+  const area = (name: string, lines: string[], placeholder: string) =>
+    `<textarea name="${esc(name)}" rows="${Math.min(6, Math.max(2, lines.length + 1))}" placeholder="${esc(placeholder)}" spellcheck="false">${esc(lines.join('\n'))}</textarea>`;
+  const limitRows = LIMIT_FIELDS.map(
+    (f) =>
+      `<tr><td>${esc(f.label)}</td><td><input name="limit.${f.key}" value="${esc(f.kind === 'duration' ? formatDuration(v.limits.values[f.key]) : String(v.limits.values[f.key]))}" size="7" inputmode="${f.kind === 'count' ? 'numeric' : 'text'}" aria-label="${esc(f.label)}"></td></tr>`,
+  ).join('');
+
   return page(
     'wicket · settings',
     `<div class="head">${brand('wicket · settings')}<a href="${esc(v.logout)}">Sign out</a></div>
 <p>Signed in as owner on ${esc(v.host)}. Settings apply to every host.</p>
+<nav class="sections"><a href="#hosts">Hosts</a><a href="#access">Access</a><a href="#limits">Limits</a><a href="#notifications">Notifications</a><a href="#bans">Bans</a></nav>
 
-<h2>Hosts</h2>
+<h2 id="hosts">Hosts</h2>
 <p><small>Mode, recipe and pass-through per host. Changes are live within 30 s; a host must also be routed to the Worker (its own route in wicket.yaml, or <code>routes: wildcard</code>). Unlisted routed hosts are <b>${esc(v.defaultMode)}</b>.${v.runtimeOverridden ? ' Entries marked <i>saved here</i> override wicket.yaml until removed or reset.' : ''}</small></p>
 <table class="hosts">${hostRows}</table>
 <form method="post" action="${esc(v.action)}" class="hostrow add"><input name="host" placeholder="new.host.example.com" aria-label="hostname" required pattern="[A-Za-z0-9.-]+">${select('mode', modeOptions, 'gated')} ${select('recipe', recipeOptions, '')} ${select('passthrough', passthroughOptions(''), '')}<button type="submit" name="action" value="host.save" class="small">Add host</button></form>
 ${v.runtimeOverridden ? `<form method="post" action="${esc(v.action)}" class="inline"><button type="submit" name="action" value="runtime.reset" class="secondary small">Reset hosts, access and limits to wicket.yaml</button></form>` : ''}
+
+<h2 id="access">Access</h2>
+<p><small>${v.access.saved ? 'Saved here; overrides wicket.yaml until reset.' : 'From wicket.yaml; saving here overrides it until reset.'} One entry per line.</small></p>
+<form method="post" action="${esc(v.action)}">
+<table>
+<tr><td><b>Allowed addresses</b><br><small>Never see a password page, never counted. IPv4, IPv4 CIDR, IPv6 (its /64), IPv6 CIDR.</small></td><td>${area('allowIps', v.access.allowIps, '203.0.113.7')}</td></tr>
+<tr><td><b>Allowed DNS names</b><br><small>Dynamic-DNS names resolved every five minutes; their addresses count as allowed.</small></td><td>${area('allowDns', v.access.allowDns, 'home.example.duckdns.org')}</td></tr>
+<tr><td><b>Trust after owner login</b><br><small>An address that logged in as owner is immune to counting and bans this long.</small></td><td>${select('trustSeconds', trustOptions, trustCurrent)}</td></tr>
+<tr><td><b>Bypass prefixes</b><br><small><code>host/prefix</code> that passes without any credential (webhooks).</small></td><td>${area('bypass', v.access.bypass, 'nas.example.com/hooks/')}</td></tr>
+</table>
+<div class="row"><button type="submit" name="action" value="access.save">Save access</button></div>
+</form>
+
+<h2 id="limits">Limits</h2>
+<p><small>${v.limits.saved ? 'Saved here; overrides wicket.yaml until reset.' : 'From wicket.yaml; saving here overrides it until reset.'} Counts are whole numbers; windows take <code>30s</code>, <code>10m</code>, <code>24h</code>, <code>7d</code>.</small></p>
+<form method="post" action="${esc(v.action)}">
+<table class="limits">${limitRows}</table>
+<div class="row"><button type="submit" name="action" value="limits.save">Save limits</button></div>
+</form>
 
 <h2>Status</h2>
 <table>
@@ -166,7 +199,7 @@ ${v.runtimeOverridden ? `<form method="post" action="${esc(v.action)}" class="in
 <tr><td><b>Bans in store</b><br><small>${total ? esc(String(total)) + ' total: ' + counts : 'none'}</small></td><td></td></tr>
 </table>
 
-<h2>Notifications</h2>
+<h2 id="notifications">Notifications</h2>
 <p><small>${esc(sourceText)}</small></p>
 <form method="post" action="${esc(v.action)}">
 <table>${policyRows}
@@ -184,7 +217,7 @@ ${v.runtimeOverridden ? `<form method="post" action="${esc(v.action)}" class="in
 ${v.notice ? `<p class="ok" role="status">${esc(v.notice)}</p>` : ''}
 </form>
 
-<h2>Bans</h2>
+<h2 id="bans">Bans</h2>
 <p><small>${total} total, newest first, ${v.perPage} per page. Unban removes the address from KV and from the Cloudflare IP list.</small></p>
 <table>${banRows}</table>
 ${

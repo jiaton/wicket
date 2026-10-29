@@ -49,9 +49,9 @@ Then, once, in the dashboard: enable Analytics Engine (*Workers & Pages → Anal
 
 - **Home**: put your public IP in `allow_ips`; no password page at home, nobody there can get the house banned. Dynamic IP → `allow_dns`; no public IP → logging in as owner makes the address trusted for `trust_window` ([details](docs/configuration.md#no-fixed-public-ip)).
 - **Ban message**: address, country, host, reason, **Unban** button. Scanner bans come as one digest line per hour; nothing happened → no message.
-- **Settings page** `/__wicket/settings` (owner): status, notification policy, newest bans with Unban.
+- **Settings page** `/__wicket/settings` (owner): hosts and modes, allow lists and trust, limits, notification policy, newest bans with Unban. Everything saved there is live within 30 s, no redeploy.
 - **Banned yourself?** Settings page, the link in the message, or `cf kv keys delete --force --namespace-id <id> 'ban:<ip>'`.
-- **Changes**: hosts and limits → `wicket.yaml` + redeploy; passwords → secrets + redeploy; notification policy → settings page, no redeploy.
+- **Changes**: hosts, access lists, limits and the notification policy → settings page (or `wicket.yaml` + redeploy, which stays the reproducible base); passwords and tokens → secrets + redeploy.
 
 ## Reference
 

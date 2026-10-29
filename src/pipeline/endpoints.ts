@@ -8,7 +8,7 @@ import { resolvePolicy } from '../notify/policy';
 import { clearBan, clearFailures, isBanned, isLockedDown, liftLockdown, listBans, LOCKDOWN_IP, readBan, readLockdown, type BanKind } from '../store/bans';
 import { clearNotifySettings, clearRuntimeSettings, readRuntimeSettings, writeNotifySettings, writeRuntimeSettings } from '../store/settings';
 import { defaultMode, hostTableOf, isHostMode, PASSTHROUGH_PRESETS } from '../config/hosts';
-import { runtimeOverridesOf } from '../config/runtime';
+import { LIMIT_FIELDS, LIMIT_KEYS, parseDuration, runtimeOverridesOf, validAllowEntry, validHostname, type LimitKey } from '../config/runtime';
 import { RECIPES } from '../recipes';
 import { resolveRuntime } from '../runtime';
 import { isTrusted, markTrusted } from '../store/trust';
@@ -143,6 +143,10 @@ async function settings(c: Ctx): Promise<Result> {
       const result = await saveHost(c, action, form);
       if (result !== 'ok') return [html(messagePage('Not saved', result), 400), 'admin'];
       notice = action === 'host.save' ? 'host-saved' : 'host-removed';
+    } else if (action === 'access.save' || action === 'limits.save') {
+      const result = action === 'access.save' ? await saveAccess(c, form) : await saveLimits(c, form);
+      if (result !== 'ok') return [html(messagePage('Not saved', result), 400), 'admin'];
+      notice = action === 'access.save' ? 'access-saved' : 'limits-saved';
     } else if (action === 'runtime.reset') {
       await clearRuntimeSettings(c.env);
       c.invalidateRuntime();
@@ -196,6 +200,8 @@ async function settings(c: Ctx): Promise<Result> {
     'host-saved': 'Host saved. Live on every data centre within 30 s.',
     'host-removed': 'Host entry removed; wicket.yaml (or the default mode) applies again.',
     'runtime-reset': 'Hosts, access and limits reset to wicket.yaml.',
+    'access-saved': 'Access settings saved. Live on every data centre within 30 s.',
+    'limits-saved': 'Limits saved. Live on every data centre within 30 s.',
   };
   const notice = ok ? NOTICES[ok] : undefined;
   return [
@@ -209,6 +215,14 @@ async function settings(c: Ctx): Promise<Result> {
         passthroughPresets: Object.keys(PASSTHROUGH_PRESETS),
         defaultMode: defaultMode(c.env),
         runtimeOverridden: rt.overridden,
+        access: {
+          allowIps: rt.settings.allowIps,
+          allowDns: rt.settings.allowDns,
+          trustSeconds: rt.settings.trustSeconds,
+          bypass: rt.settings.bypass.map((b) => `${b.host}${b.prefix}`),
+          saved: rt.overrides.access !== undefined,
+        },
+        limits: { values: Object.fromEntries(LIMIT_KEYS.map((k) => [k, rt.settings[k]])) as Record<LimitKey, number>, saved: rt.overrides.limits !== undefined },
         policy,
         source: policy.source,
         channels: queues,
@@ -268,6 +282,51 @@ async function saveHost(c: Ctx, action: 'host.save' | 'host.remove', form: FormD
     hosts[host] = entry;
   }
   await writeRuntimeSettings(c.env, { ...doc, hosts });
+  c.invalidateRuntime();
+  return 'ok';
+}
+
+const lines = (form: FormData | null, name: string): string[] =>
+  String(form?.get(name) ?? '')
+    .split(/\r?\n|,/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+/** Access section: allow lists, trust window, bypass prefixes → the runtime overrides document. */
+async function saveAccess(c: Ctx, form: FormData | null): Promise<string> {
+  const allowIps = lines(form, 'allowIps');
+  for (const e of allowIps) if (!validAllowEntry(e)) return `"${e}" is not an IPv4/IPv6 address or CIDR.`;
+  const allowDns = lines(form, 'allowDns').map((s) => s.toLowerCase());
+  for (const n of allowDns) if (!validHostname(n)) return `"${n}" is not a hostname.`;
+  const bypass = lines(form, 'bypass').map((s) => s.toLowerCase());
+  for (const b of bypass) {
+    const host = b.split('/')[0]!;
+    if (!validHostname(host)) return `"${b}" must look like host/prefix.`;
+    if (c.cfg.cookieDomain && host !== c.cfg.cookieDomain && !host.endsWith(`.${c.cfg.cookieDomain}`)) return `"${host}" is not under ${c.cfg.cookieDomain}.`;
+  }
+  const trustRaw = String(form?.get('trustSeconds') ?? '');
+  const doc = runtimeOverridesOf(await readRuntimeSettings(c.env));
+  const trustSeconds = trustRaw === 'custom' ? (doc.access?.trustSeconds ?? c.cfg.trustSeconds) : Number(trustRaw);
+  if (!Number.isInteger(trustSeconds) || trustSeconds < 0) return 'Trust window must be a number of seconds.';
+  await writeRuntimeSettings(c.env, { ...doc, access: { allowIps, allowDns, trustSeconds, bypass } });
+  c.invalidateRuntime();
+  return 'ok';
+}
+
+/** Limits section: counts and windows → the runtime overrides document. */
+async function saveLimits(c: Ctx, form: FormData | null): Promise<string> {
+  const limits: Partial<Record<LimitKey, number>> = {};
+  for (const f of LIMIT_FIELDS) {
+    const raw = String(form?.get(`limit.${f.key}`) ?? '').trim();
+    if (!raw) return `${f.label}: a value is required.`;
+    const n = f.kind === 'duration' ? parseDuration(raw) : /^\d+$/.test(raw) ? Number(raw) : null;
+    if (n === null || !Number.isFinite(n)) return `${f.label}: "${raw}" is not ${f.kind === 'duration' ? 'a duration (30s, 10m, 24h, 7d)' : 'a whole number'}.`;
+    if (n < (f.key === 'signatureLimit' ? 0 : 1)) return `${f.label}: must be at least ${f.key === 'signatureLimit' ? 0 : 1}.`;
+    if (f.kind === 'duration' && n > 30 * 86_400) return `${f.label}: at most 30 days.`;
+    limits[f.key] = n;
+  }
+  const doc = runtimeOverridesOf(await readRuntimeSettings(c.env));
+  await writeRuntimeSettings(c.env, { ...doc, limits });
   c.invalidateRuntime();
   return 'ok';
 }
