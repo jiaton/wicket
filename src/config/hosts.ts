@@ -1,5 +1,5 @@
 import type { Env } from './env';
-import { underPrefix } from '../core/paths';
+import { underPrefix } from '../core/paths.ts';
 
 /** A watch rule: the origin's answer to a matching request counts as a login failure. */
 export interface WatchRule {
