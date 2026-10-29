@@ -15,7 +15,7 @@ Today a request with `X-API-Key`, `x-access-token` or `?token=` must carry a val
 
 ## Done since 2026-10-28
 
-A (pass-through rules), B1–B3 (hosts, access and limits on the settings page; `open`/`off` modes; wildcard routes), C (Cloudflare section: token check, Analytics probe, one-click IP list and WAF rule), E (security review, all findings fixed), and first-run setup: a deploy with only `zone` + `routes: wildcard` prints a one-time link where the owner picks passwords in the browser (PBKDF2 hashes in KV); `setup: false` keeps the secrets-only path.
+A (pass-through rules, custom rules editable on the page), B (hosts, access, limits on the settings page; `open`/`off` modes; wildcard routes; 24-hour counts per host; ban search), C (Cloudflare section: token check, Analytics probe, one-click IP list and WAF rule), D except TOTP (share links, country rules), E (security review, all findings fixed), and first-run setup: a deploy with only `zone` + `routes: wildcard` prints a one-time link where the owner picks passwords in the browser (PBKDF2 hashes in KV); `setup: false` keeps the secrets-only path. See CHANGELOG.md. Left: TOTP (not wanted), the Workers Builds end-to-end test, a v1.0 tag.
 
 ## B. Configure in the browser, deploy once
 
