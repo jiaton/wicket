@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse } from 'yaml';
 
-import { HOST_MODES, isHostMode, PASSTHROUGH_DEFAULT_STATUS, PASSTHROUGH_PRESETS, type HostMode, type Passthrough, type WatchRule } from '../src/config/hosts.ts';
+import { countriesOf, HOST_MODES, isHostMode, PASSTHROUGH_DEFAULT_STATUS, PASSTHROUGH_PRESETS, type Countries, type HostMode, type Passthrough, type WatchRule } from '../src/config/hosts.ts';
 import { DEFAULT_POLICY, isDelivery, isPolicyKind, type NotifyPolicy } from '../src/config/notifications.ts';
 
 export const DEFAULT_FILE = 'wicket.yaml';
@@ -24,6 +24,7 @@ export interface HostEntry {
   watch?: WatchRule[];
   /** Gated hosts: carriers of the app's own credential that skip the password page. */
   passthrough?: Passthrough;
+  countries?: Countries;
 }
 
 export interface Limit {
@@ -172,7 +173,17 @@ function hostEntry(v: unknown, host: string, zone: string, recipes: ReadonlySet<
   const passthrough = passthroughRule(r.passthrough, host);
   if (mode !== 'observe' && !passthrough && (recipe || r.watch !== undefined)) fail(`hosts.${host}: recipe/watch apply to mode: observe or to a gated host with passthrough`);
   const watch = watchRules(r.watch, host);
-  return { mode, ...(recipe ? { recipe } : {}), ...(watch?.length ? { watch } : {}), ...(passthrough ? { passthrough } : {}) };
+  let countries: Countries | undefined;
+  if (r.countries !== undefined && r.countries !== null) {
+    if (!isObject(r.countries)) fail(`hosts.${host}.countries must be a mapping with allow: or deny:`);
+    const cr = r.countries as Raw;
+    if ((cr.allow === undefined) === (cr.deny === undefined)) fail(`hosts.${host}.countries needs exactly one of allow: or deny:`);
+    const list = strings(cr.allow ?? cr.deny, `hosts.${host}.countries`);
+    for (const code of list) if (!/^[A-Za-z]{2}$/.test(code)) fail(`hosts.${host}.countries: "${code}" is not a two-letter country code`);
+    countries = countriesOf(cr);
+    if (!countries) fail(`hosts.${host}.countries must list at least one country`);
+  }
+  return { mode, ...(recipe ? { recipe } : {}), ...(watch?.length ? { watch } : {}), ...(passthrough ? { passthrough } : {}), ...(countries ? { countries } : {}) };
 }
 
 /** `passthrough: api` (a preset) or a mapping of headers / cookies / params / paths. */
@@ -360,9 +371,9 @@ export function loadConfig(path?: string, recipes: ReadonlySet<string> | null = 
 export function toVars(cfg: WicketConfig): Record<string, string> {
   const hostsJson: Record<string, unknown> = {};
   for (const [host, h] of Object.entries(cfg.hosts)) {
-    if (h.mode === 'observe') hostsJson[host] = { mode: 'observe', ...(h.recipe ? { recipe: h.recipe } : {}), ...(h.watch ? { watch: h.watch } : {}) };
-    else if (h.passthrough) hostsJson[host] = { mode: 'gated', passthrough: h.passthrough };
-    else if (h.mode !== 'gated' || cfg.defaultMode !== 'gated') hostsJson[host] = { mode: h.mode };
+    const entry: Record<string, unknown> = { mode: h.mode, ...(h.recipe ? { recipe: h.recipe } : {}), ...(h.watch ? { watch: h.watch } : {}), ...(h.passthrough ? { passthrough: h.passthrough } : {}), ...(h.countries ? { countries: h.countries } : {}) };
+    // Plain gated hosts are the default and need no entry (unless the default mode differs).
+    if (Object.keys(entry).length > 1 || h.mode !== 'gated' || cfg.defaultMode !== 'gated') hostsJson[host] = entry;
   }
   return {
     ALLOW_IPS: cfg.allowIps.join(','),

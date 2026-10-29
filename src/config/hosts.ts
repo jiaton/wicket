@@ -48,6 +48,47 @@ export const PASSTHROUGH_PRESETS: Record<string, Passthrough> = {
   api: { headers: ['authorization', 'x-api-key', 'x-access-token'], cookies: [], params: ['token'], paths: API_PATHS, status: PASSTHROUGH_DEFAULT_STATUS },
 };
 
+/** Country rule: either an allow list (everyone else is refused) or a deny list; ISO 3166-1 alpha-2, upper-case. */
+export interface Countries {
+  allow?: string[];
+  deny?: string[];
+}
+
+const CC = /^[A-Z]{2}$/;
+const codes = (v: unknown): string[] | undefined => {
+  const list = strings(v).map((s) => s.toUpperCase()).filter((s) => CC.test(s));
+  return list.length ? list : undefined;
+};
+
+export function countriesOf(raw: unknown): Countries | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const allow = codes(r.allow);
+  const deny = codes(r.deny);
+  if (!allow && !deny) return undefined;
+  return allow ? { allow } : { deny };
+}
+
+/** Is a visitor from `cc` allowed on a host with this rule? Unknown countries (`??`, `T1`) pass a deny list and fail an allow list. */
+export function countryAllowed(rule: Countries | undefined, cc: string): boolean {
+  if (!rule) return true;
+  if (rule.allow) return rule.allow.includes(cc);
+  return !(rule.deny ?? []).includes(cc);
+}
+
+/** One-line form for the settings page: `allow:US,CA` or `deny:RU,CN`; empty = no rule. */
+export function parseCountriesSpec(spec: string): Countries | undefined | string {
+  const s = spec.trim();
+  if (!s) return undefined;
+  const m = s.match(/^(allow|deny)\s*:\s*(.+)$/i);
+  if (!m) return 'use allow:US,CA or deny:RU,CN';
+  const list = m[2]!.split(/[,\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
+  if (list.some((x) => !CC.test(x))) return 'country codes are two letters (ISO 3166-1)';
+  return m[1]!.toLowerCase() === 'allow' ? { allow: list } : { deny: list };
+}
+
+export const formatCountriesSpec = (c: Countries | undefined): string => (!c ? '' : c.allow ? `allow:${c.allow.join(',')}` : `deny:${(c.deny ?? []).join(',')}`);
+
 export interface HostConfig {
   mode: HostMode;
   /** Name of a built-in recipe (src/recipes) whose rules are prepended to `watch`. */
@@ -55,6 +96,8 @@ export interface HostConfig {
   watch: WatchRule[];
   /** Gated hosts only: requests with the app's own credential go to the app; `recipe`/`watch` then apply to those requests. */
   passthrough?: Passthrough;
+  /** Visitors from other countries get 403 before anything else (allow-listed addresses excepted). */
+  countries?: Countries;
 }
 
 export type HostTable = Record<string, HostConfig>;
@@ -130,7 +173,7 @@ export function formatPassthroughSpec(p: Passthrough): string {
 /** One host's entry from JSON. Malformed → `gated`, so a typo can only make a host stricter. */
 export function hostEntryOf(raw: unknown): HostConfig {
   if (!raw || typeof raw !== 'object') return GATED;
-  const r = raw as { mode?: unknown; recipe?: unknown; watch?: unknown; passthrough?: unknown };
+  const r = raw as { mode?: unknown; recipe?: unknown; watch?: unknown; passthrough?: unknown; countries?: unknown };
   const mode: HostMode = isHostMode(r.mode) ? r.mode : 'gated';
   const watch: WatchRule[] = Array.isArray(r.watch)
     ? r.watch.filter(
@@ -139,7 +182,8 @@ export function hostEntryOf(raw: unknown): HostConfig {
       )
     : [];
   const passthrough = mode === 'gated' ? passthroughOf(r.passthrough) : undefined;
-  return { mode, recipe: typeof r.recipe === 'string' ? r.recipe : undefined, watch, ...(passthrough ? { passthrough } : {}) };
+  const countries = countriesOf(r.countries);
+  return { mode, recipe: typeof r.recipe === 'string' ? r.recipe : undefined, watch, ...(passthrough ? { passthrough } : {}), ...(countries ? { countries } : {}) };
 }
 
 /** `{"host": {...}}` → table; anything unparseable → empty table. */

@@ -8,7 +8,7 @@ import { emit, queueStatus } from '../notify';
 import { resolvePolicy } from '../notify/policy';
 import { clearBan, clearFailures, isBanned, isLockedDown, liftLockdown, listBans, LOCKDOWN_IP, readBan, readLockdown, type BanKind } from '../store/bans';
 import { clearNotifySettings, clearRuntimeSettings, readRuntimeSettings, writeNotifySettings, writeRuntimeSettings } from '../store/settings';
-import { defaultMode, formatPassthroughSpec, hostTableOf, isHostMode, parsePassthroughSpec, PASSTHROUGH_PRESETS } from '../config/hosts';
+import { defaultMode, formatCountriesSpec, formatPassthroughSpec, hostTableOf, isHostMode, parseCountriesSpec, parsePassthroughSpec, PASSTHROUGH_PRESETS } from '../config/hosts';
 import { LIMIT_FIELDS, LIMIT_KEYS, parseDuration, runtimeOverridesOf, validAllowEntry, validHostname, type LimitKey } from '../config/runtime';
 import { RECIPES } from '../recipes';
 import { resolveRuntime } from '../runtime';
@@ -319,6 +319,7 @@ async function settings(c: Ctx): Promise<Result> {
       passthrough: h.passthrough ? (Object.entries(PASSTHROUGH_PRESETS).find(([, p]) => JSON.stringify(p) === JSON.stringify(h.passthrough))?.[0] ?? 'custom') : '',
       passthroughSpec: h.passthrough && !Object.values(PASSTHROUGH_PRESETS).some((p) => JSON.stringify(p) === JSON.stringify(h.passthrough)) ? formatPassthroughSpec(h.passthrough) : '',
       watchRules: h.watch.length,
+      countries: formatCountriesSpec(h.countries),
       source: savedHosts.has(host) ? 'saved' : 'config',
     }));
   const banCounts: Partial<Record<BanKind | 'unknown', number>> = {};
@@ -434,6 +435,9 @@ async function saveHost(c: Ctx, action: 'host.save' | 'host.remove', form: FormD
       } else if (passthrough in PASSTHROUGH_PRESETS) entry.passthrough = passthrough;
       else return `Unknown pass-through preset "${passthrough}".`;
     }
+    const countries = parseCountriesSpec(String(form?.get('countries') ?? ''));
+    if (typeof countries === 'string') return `Countries: ${countries}.`;
+    if (countries) entry.countries = countries;
     // Watch rules from wicket.yaml survive a mode/recipe change made here.
     const watch = hostTableOf(c.env.HOSTS_JSON)[host]?.watch;
     if (mode === 'observe' && watch?.length) entry.watch = watch;

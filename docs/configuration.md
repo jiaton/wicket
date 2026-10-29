@@ -4,6 +4,8 @@ Everything lives in `wicket.yaml` (compiled into the Worker at deploy time, vali
 
 Hosts, access lists, limits and the notification policy can also be changed on the owner-only settings page (`/__wicket/settings`) without a redeploy: those changes are stored in KV, layer over the file (a saved section replaces that section of the file, it does not merge), and *Reset* returns to it. A host must still be routed to the Worker; with `routes: wildcard` every subdomain is, so adding a host is a form on that page.
 
+Country rules (`countries: {allow: [...]}` or `{deny: [...]}`, ISO codes) refuse visitors from other countries with 403 before any credential is looked at; allow-listed addresses are exempt. Unknown countries pass a deny list and fail an allow list. On the settings page: `allow:US,CA` or `deny:RU`.
+
 Host modes: `gated` (password page unless a cookie, token or pass-through credential is present), `observe` (forwarded, the app's own login watched, scanners banned), `open` (forwarded untouched, bans still apply; a host that only wants analytics), `off` (503 maintenance page).
 
 ```yaml
@@ -19,6 +21,7 @@ cookie_days: 365
 hosts:
   nas.example.com: gated
   api.example.com: { passthrough: api }   # gated, but the app's own tokens reach the app (see Pass-through)
+  eu.example.com: { countries: { allow: [DE, FR] } }   # or deny: [RU]; 403 for everyone else, allow-listed addresses excepted
   photos.example.com: { mode: observe, recipe: immich }
   blog.example.com:
     mode: observe

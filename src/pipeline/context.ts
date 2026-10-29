@@ -31,6 +31,7 @@ export type Outcome =
   | 'ban-scan' // this request triggered a scanner ban (signature or burst)
   | 'ban-origin' // this request triggered a ban for failed logins at the app itself
   | 'banned' // already banned
+  | 'geo' // refused by the host's country rule
   | 'locked' // lockdown in effect
   | 'unban' // unban / lift-lockdown link used
   | 'logout'

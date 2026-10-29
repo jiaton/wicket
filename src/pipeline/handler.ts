@@ -1,5 +1,5 @@
 import { banAddress } from '../actions/ban';
-import { carriesAppCredential } from '../config/hosts';
+import { carriesAppCredential, countryAllowed } from '../config/hosts';
 import { apiTokens, matchToken } from '../config/tokens';
 import type { Env } from '../config/env';
 import { HealthFlag, RecentSet, SlidingCounter } from '../core/counters';
@@ -54,11 +54,15 @@ export const STEPS: Step[] = [
   //    of recent bans comes first: KV may still answer "not banned" for a minute.
   async (c) => (c.recentBans.has(c.ip) || (await isBanned(c.env, c.ip)) ? [html(messagePage('Blocked', 'This address has been blocked.'), 403), 'banned'] : null),
 
-  // 4. ACME HTTP-01: certificate validators fetch this anonymously; the origin answers 404
+  // 4. Country rules (`countries:` per host): visitors from elsewhere get 403 whatever they
+  //    carry. Allow-listed addresses passed at step 2, so the household is never shut out.
+  async (c) => (countryAllowed(c.host.countries, c.cc) ? null : [html(messagePage('Not available', 'This host is not available from your region.'), 403), 'geo']),
+
+  // 5. ACME HTTP-01: certificate validators fetch this anonymously; the origin answers 404
   //    unless a challenge is pending, so this leaks nothing and keeps renewals working.
   async (c) => (underPrefix(c.url.pathname, ACME_PREFIX) ? passthrough(c, 'bypass') : null),
 
-  // 5. Hosts that are not gated: observe (forward, watch, count), open (forward untouched),
+  // 6. Hosts that are not gated: observe (forward, watch, count), open (forward untouched),
   //    off (maintenance page). Bans above still apply to all of them.
   async (c) => {
     switch (c.host.mode) {
@@ -73,23 +77,23 @@ export const STEPS: Step[] = [
     }
   },
 
-  // 6. Configured open prefixes (webhooks, native clients).
+  // 7. Configured open prefixes (webhooks, native clients).
   async (c) => (c.cfg.bypass.some((b) => b.host === c.url.hostname && underPrefix(c.url.pathname, b.prefix)) ? passthrough(c, 'bypass') : null),
 
-  // 7. CORS preflights carry no credentials by design; the origin's CORS policy answers them.
+  // 8. CORS preflights carry no credentials by design; the origin's CORS policy answers them.
   async (c) => (c.req.method === 'OPTIONS' ? passthrough(c, 'preflight') : null),
 
-  // 8. Registered API tokens pass (and stay in the request for the origin).
+  // 9. Registered API tokens pass (and stay in the request for the origin).
   async (c) => {
     const presented = presentedToken(c.req, c.url);
     return presented && matchToken(presented.value, c.url.hostname, apiTokens(c.env)) ? passthrough(c, 'token') : null;
   },
 
-  // 9. The app's own credential (hosts.<name>.passthrough): the request goes to the app, which
+  // 10. The app's own credential (hosts.<name>.passthrough): the request goes to the app, which
   //    decides; its rejections count as failed logins for the address. wicket stores no app tokens.
   async (c) => (c.host.passthrough && carriesAppCredential(c.host.passthrough, c.req, c.url) ? appPassthrough(c) : null),
 
-  // 10. The session cookie. Checked before a stray app header can be punished: a logged-in
+  // 11. The session cookie. Checked before a stray app header can be punished: a logged-in
   //     browser whose front end sends `X-Api-Key` to a host without a pass-through rule is a
   //     user, not a guesser.
   async (c) => {
@@ -100,7 +104,7 @@ export const STEPS: Step[] = [
     return passthrough(c, 'pass');
   },
 
-  // 11. A share cookie (set by a share link the owner made): one host, until it expires or
+  // 12. A share cookie (set by a share link the owner made): one host, until it expires or
   //     the owner revokes it. Signature first (no KV for forgeries), then the record.
   async (c) => {
     const value = shareCookieValue(c.req);
@@ -112,7 +116,7 @@ export const STEPS: Step[] = [
     return (await readShare(c.env, id)) ? passthrough(c, 'share') : null;
   },
 
-  // 12. A wrong explicit token is a strike for the address (and, for wicket's own carriers, for
+  // 13. A wrong explicit token is a strike for the address (and, for wicket's own carriers, for
   //     the lockdown counter); a foreign bearer is ignored, not punished. During a lockdown the
   //     strike still lands, then the answer is "locked": tokens are not guessable for free.
   async (c) => {
@@ -123,7 +127,7 @@ export const STEPS: Step[] = [
     return result;
   },
 
-  // 13. Nothing presented. A few requests for known scanner paths/agents, or hundreds of
+  // 14. Nothing presented. A few requests for known scanner paths/agents, or hundreds of
   //     anonymous probes in a minute = scanner → ban; otherwise the password page (or a
   //     JSON 401 for non-browsers).
   async (c) => {

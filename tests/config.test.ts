@@ -151,3 +151,16 @@ describe('routes and modes', () => {
     expect(bad('zone: example.test\nhosts: { a.example.test: { mode: open, passthrough: api } }')).toThrow(/passthrough only applies/);
   });
 });
+
+describe('countries', () => {
+  it('compiles allow/deny lists and rejects malformed rules', () => {
+    const cfg = parseConfig(parse(`${minimal}\n  eu.example.test: { countries: { allow: [de, FR] } }\n  x.example.test: { mode: observe, countries: { deny: [RU] } }`), RECIPE_NAMES);
+    expect(cfg.hosts['eu.example.test']!.countries).toEqual({ allow: ['DE', 'FR'] });
+    const env = makeEnv(new FakeKV(), new FakeAnalytics(), toVars(cfg));
+    expect(hostConfig(env, 'eu.example.test')).toMatchObject({ mode: 'gated', countries: { allow: ['DE', 'FR'] } });
+    expect(hostConfig(env, 'x.example.test')).toMatchObject({ mode: 'observe', countries: { deny: ['RU'] } });
+    expect(bad(`${minimal}\n  a.example.test: { countries: { allow: [DE], deny: [RU] } }`)).toThrow(/exactly one/);
+    expect(bad(`${minimal}\n  a.example.test: { countries: { allow: [Germany] } }`)).toThrow(/two-letter/);
+    expect(bad(`${minimal}\n  a.example.test: { countries: [DE] }`)).toThrow(/mapping/);
+  });
+});

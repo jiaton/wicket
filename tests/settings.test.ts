@@ -366,3 +366,19 @@ describe('custom pass-through rules on the page', () => {
     expect(page).toContain('<option value="custom" selected>');
   });
 });
+
+describe('country rules on the page', () => {
+  const cookieOf = (res: Response) => (res.headers.get('set-cookie') ?? '').split(';')[0]!;
+  const post = (h: ReturnType<typeof harness>, cookie: string, fields: Record<string, string>) =>
+    h.run(h.request('/__wicket/settings', { method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' }, body: new URLSearchParams(fields) }));
+  it('saves allow/deny lists per host and shows them back', async () => {
+    const h = harness();
+    const owner = cookieOf(await h.login('owner-pw'));
+    expect((await post(h, owner, { action: 'host.save', host: 'nas.example.test', mode: 'gated', countries: 'somewhere' })).status).toBe(400);
+    expect((await post(h, owner, { action: 'host.save', host: 'nas.example.test', mode: 'gated', countries: 'deny: ru, cn' })).status).toBe(303);
+    expect((await h.run(h.request('/', { ip: '203.0.113.9', headers: { 'cf-ipcountry': 'CN', accept: '*/*' } }))).status).toBe(403);
+    expect((await h.run(h.request('/', { ip: '203.0.113.9', headers: { 'cf-ipcountry': 'JP', accept: '*/*' } }))).status).toBe(401);
+    const page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('name="countries" value="deny:RU,CN"');
+  });
+});

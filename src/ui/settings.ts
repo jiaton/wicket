@@ -40,6 +40,8 @@ export interface HostRow {
   /** The custom rule in one-line form (empty unless custom). */
   passthroughSpec: string;
   watchRules: number;
+  /** `allow:US,CA` / `deny:RU` / ''. */
+  countries: string;
   /** Where the effective entry comes from. */
   source: 'config' | 'saved';
 }
@@ -163,6 +165,7 @@ export function settingsPage(v: SettingsView): string {
   const modeOptions: [string, string][] = HOST_MODES.map((m) => [m, `${m} — ${MODE_HINTS[m]}`]);
   const recipeOptions: [string, string][] = [['', 'no recipe'], ...v.recipes.map((r): [string, string] => [r, r])];
   const passthroughOptions = (): [string, string][] => [['', 'none'], ...v.passthroughPresets.map((p): [string, string] => [p, `${p} (app's own tokens reach the app)`]), ['custom', 'custom rule →']];
+  const countriesInput = (value: string) => `<input name="countries" value="${esc(value)}" placeholder="countries: allow:US,CA or deny:RU" aria-label="country rule" class="countries">`;
   const specInput = (value: string) => `<input name="spec" value="${esc(value)}" placeholder="headers=authorization; cookies=sid; paths=/api/; status=401,403" aria-label="custom pass-through rule" class="spec">`;
   const hostRows = v.hosts.length
     ? v.hosts
@@ -170,7 +173,7 @@ export function settingsPage(v: SettingsView): string {
           (h) =>
             `<tr><td><form method="post" action="${esc(v.action)}" class="hostrow"><input type="hidden" name="host" value="${esc(h.host)}">` +
             `<b>${esc(h.host)}</b> <small>${h.source === 'saved' ? 'saved here' : 'wicket.yaml'}${h.watchRules ? ` · ${h.watchRules} watch rule${h.watchRules === 1 ? '' : 's'}` : ''}</small><br>` +
-            `${select('mode', modeOptions, h.mode)} ${select('recipe', recipeOptions, h.recipe)} ${select('passthrough', passthroughOptions(), h.passthrough)} ${specInput(h.passthroughSpec)}` +
+            `${select('mode', modeOptions, h.mode)} ${select('recipe', recipeOptions, h.recipe)} ${select('passthrough', passthroughOptions(), h.passthrough)} ${countriesInput(h.countries)} ${specInput(h.passthroughSpec)}` +
             `<span class="actions"><button type="submit" name="action" value="host.save" class="small">Save</button>` +
             `${h.source === 'saved' ? `<button type="submit" name="action" value="host.remove" class="secondary small">Remove</button>` : ''}</span></form></td></tr>`,
         )
@@ -195,9 +198,9 @@ export function settingsPage(v: SettingsView): string {
 <nav class="sections"><a href="#hosts">Hosts</a><a href="#access">Access</a><a href="#limits">Limits</a><a href="#shares">Shares</a><a href="#passwords">Passwords</a><a href="#cloudflare">Cloudflare</a><a href="#notifications">Notifications</a><a href="#bans">Bans</a></nav>
 
 <h2 id="hosts">Hosts</h2>
-<p><small>Mode, recipe and pass-through per host (a custom rule: <code>headers=…; cookies=…; params=…; paths=…; status=…</code>, see the docs). Changes are live within 30 s; a host must also be routed to the Worker (its own route in wicket.yaml, or <code>routes: wildcard</code>). Unlisted routed hosts are <b>${esc(v.defaultMode)}</b>.${v.runtimeOverridden ? ' Entries marked <i>saved here</i> override wicket.yaml until removed or reset.' : ''}</small></p>
+<p><small>Mode, recipe, country rule and pass-through per host (a custom rule: <code>headers=…; cookies=…; params=…; paths=…; status=…</code>, see the docs). Changes are live within 30 s; a host must also be routed to the Worker (its own route in wicket.yaml, or <code>routes: wildcard</code>). Unlisted routed hosts are <b>${esc(v.defaultMode)}</b>.${v.runtimeOverridden ? ' Entries marked <i>saved here</i> override wicket.yaml until removed or reset.' : ''}</small></p>
 <table class="hosts">${hostRows}</table>
-<form method="post" action="${esc(v.action)}" class="hostrow add"><input name="host" placeholder="new.host.example.com" aria-label="hostname" required pattern="[A-Za-z0-9.-]+">${select('mode', modeOptions, 'gated')} ${select('recipe', recipeOptions, '')} ${select('passthrough', passthroughOptions(), '')} ${specInput('')}<button type="submit" name="action" value="host.save" class="small">Add host</button></form>
+<form method="post" action="${esc(v.action)}" class="hostrow add"><input name="host" placeholder="new.host.example.com" aria-label="hostname" required pattern="[A-Za-z0-9.-]+">${select('mode', modeOptions, 'gated')} ${select('recipe', recipeOptions, '')} ${select('passthrough', passthroughOptions(), '')} ${countriesInput('')} ${specInput('')}<button type="submit" name="action" value="host.save" class="small">Add host</button></form>
 ${v.runtimeOverridden ? `<form method="post" action="${esc(v.action)}" class="inline"><button type="submit" name="action" value="runtime.reset" class="secondary small">Reset hosts, access and limits to wicket.yaml</button></form>` : ''}
 
 <h2 id="access">Access</h2>

@@ -33,16 +33,17 @@ The Worker is an ordered list of steps (`src/pipeline/handler.ts`); the first on
 1. wicket's own endpoints (`/__wicket/login|logout|unban`), so a banned owner can still use the signed unban link
 2. allow-listed addresses pass (`allow_ips`, plus `allow_dns` names resolved every five minutes)
 3. banned addresses get 403 on every host and path
-4. `/.well-known/acme-challenge/` passes (certificate renewals)
-5. observe-mode hosts: forward, watch, count
-6. configured bypass prefixes pass
-7. `OPTIONS` preflights pass (browsers send them without cookies)
-8. registered API tokens → pass (the header stays in the request for the origin)
-9. the app's own credential on a gated host with a `passthrough` rule (header, cookie or query parameter the app validates itself; optional path prefixes) → forwarded like observe mode: the app decides, its 401 counts as a failed login for the address, scanner signatures and probe bursts still apply. wicket keeps no copy of app tokens.
-10. session cookie → pass (before any stray app header can be punished)
-11. share cookie (from a share link the owner made for this host: signed, time-limited, revocable in KV) → pass
-12. wrong explicit token (`X-Wicket-Token`, `?wicket_token=`, and `X-API-Key` / `x-access-token` / `?token=` where no pass-through rule covers them) → strike for the address; only wicket's own carriers also move the lockdown counter; foreign bearer → ignored. During a lockdown the strike still lands before the `locked` answer.
-13. nothing presented: known scanner path/agent (third hit) or probe burst → scanner ban, else the password page (JSON 401 for non-browsers)
+4. the host's country rule (`countries: {allow: […]}` or `{deny: […]}`) refuses visitors from elsewhere with 403
+5. `/.well-known/acme-challenge/` passes (certificate renewals)
+6. observe / open / off hosts: forward and watch, forward untouched, or a maintenance page
+7. configured bypass prefixes pass
+8. `OPTIONS` preflights pass (browsers send them without cookies)
+9. registered API tokens → pass (the header stays in the request for the origin)
+10. the app's own credential on a gated host with a `passthrough` rule (header, cookie or query parameter the app validates itself; optional path prefixes) → forwarded like observe mode: the app decides, its 401 counts as a failed login for the address, scanner signatures and probe bursts still apply. wicket keeps no copy of app tokens.
+11. session cookie → pass (before any stray app header can be punished)
+12. share cookie (from a share link the owner made for this host: signed, time-limited, revocable in KV) → pass
+13. wrong explicit token (`X-Wicket-Token`, `?wicket_token=`, and `X-API-Key` / `x-access-token` / `?token=` where no pass-through rule covers them) → strike for the address; only wicket's own carriers also move the lockdown counter; foreign bearer → ignored. During a lockdown the strike still lands before the `locked` answer.
+14. nothing presented: known scanner path/agent (third hit) or probe burst → scanner ban, else the password page (JSON 401 for non-browsers)
 
 ## Ban triggers
 

@@ -638,3 +638,20 @@ describe('hardening', () => {
     expect(analyticsPath('/short', 'pass')).toBe('/short');
   });
 });
+
+describe('country rules', () => {
+  it('refuse visitors from elsewhere before anything else, except allow-listed addresses', async () => {
+    const h = harness({ ALLOW_IPS: '198.51.100.1', HOSTS_JSON: JSON.stringify({ 'eu.example.test': { mode: 'observe', countries: { allow: ['DE', 'FR'] } }, 'nas.example.test': { mode: 'gated', countries: { deny: ['RU'] } } }) });
+    const from = (cc: string, host: string, ip = '203.0.113.9', extra: Record<string, string> = {}) => h.run(h.request('/', { host, ip, headers: { 'cf-ipcountry': cc, accept: '*/*', ...extra } }));
+    expect((await from('DE', 'eu.example.test')).status).toBe(200);
+    expect((await from('US', 'eu.example.test')).status).toBe(403);
+    expect((await from('??', 'eu.example.test')).status).toBe(403); // unknown fails an allow list
+    expect((await from('US', 'nas.example.test')).status).toBe(401);
+    expect((await from('RU', 'nas.example.test')).status).toBe(403);
+    expect((await from('??', 'nas.example.test')).status).toBe(401); // unknown passes a deny list
+    expect((await from('RU', 'nas.example.test', '198.51.100.1')).status).toBe(200); // allow-listed
+    const cookie = cookieFrom(await h.login('owner-pw', {}, { ip: '203.0.113.9' }));
+    expect((await from('RU', 'nas.example.test', '203.0.113.9', { cookie })).status).toBe(403); // a session does not beat the rule
+    expect(h.analytics.outcomes().filter((o) => o === 'geo')).toHaveLength(4);
+  });
+});
