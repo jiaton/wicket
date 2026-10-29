@@ -2,9 +2,15 @@
 
 Everything lives in `wicket.yaml` (compiled into the Worker at deploy time, validated: an unknown recipe, a host outside the zone or a typo in a mode stops the deploy) and in the secrets. Durations accept `30s`, `10m`, `24h`, `7d`.
 
+Hosts and the notification policy can also be changed on the owner-only settings page (`/__wicket/settings`) without a redeploy: those changes are stored in KV, layer over the file, and *Reset* returns to it. A host must still be routed to the Worker; with `routes: wildcard` every subdomain is, so adding a host is a form on that page.
+
+Host modes: `gated` (password page unless a cookie, token or pass-through credential is present), `observe` (forwarded, the app's own login watched, scanners banned), `open` (forwarded untouched, bans still apply; a host that only wants analytics), `off` (503 maintenance page).
+
 ```yaml
 zone: example.com                 # every host must be inside it
 worker: wicket                    # Worker name
+routes: explicit                  # explicit = one route per host below; wildcard = *.example.com/*, unlisted hosts get default_mode
+default_mode: gated               # wildcard routes only: gated | observe | open | off for hosts not listed
 site_name: example.com            # prefix of every notification; default = zone
 cookie_domain: example.com        # one login per domain; default = zone
 cookie_days: 365

@@ -1,7 +1,7 @@
 import { sql, type Row } from '../cloudflare/analytics';
 import type { Env } from '../config/env';
 import type { PolicyKind } from '../config/notifications';
-import { settings } from '../config/settings';
+import { resolveRuntime } from '../runtime';
 import { emit, type Fetch, type Severity } from '../notify';
 import { failureCount, isBanned } from '../store/bans';
 import { foldAddresses } from './addresses';
@@ -23,7 +23,7 @@ export { inQuietHours, localHour } from './detectors/quiet-hours';
  * blob5 outcome, blob6 method, double1 status, double2 duration ms.
  */
 export async function findAlerts(env: Env, doFetch: Fetch, now: number): Promise<Alert[]> {
-  const cfg = settings(env);
+  const cfg = (await resolveRuntime(env)).settings;
   const query = (q: string) => sql(env, doFetch, q);
   const rows: Row[] = await query(
     `SELECT blob3 AS ip, blob4 AS country, blob5 AS outcome, blob1 AS host, SUM(_sample_interval) AS n, SUM(IF(double1 >= 400, _sample_interval, 0)) AS errors FROM ${cfg.analyticsDataset} WHERE ${WINDOW} GROUP BY ip, country, outcome, host ORDER BY n DESC LIMIT 400`,
@@ -67,7 +67,7 @@ const TITLES: Record<string, string> = {
 /** Runs the detectors, drops alerts already sent this hour, and emits one event per kind. */
 export async function runAnalysis(env: Env, doFetch: Fetch, now: number): Promise<Alert[]> {
   if (!env.CF_API_TOKEN || !env.CF_ACCOUNT_ID) return [];
-  const cfg = settings(env);
+  const cfg = (await resolveRuntime(env)).settings;
   const fresh: Alert[] = [];
   for (const alert of await findAlerts(env, doFetch, now)) {
     const key = `alert:${alert.key}`;

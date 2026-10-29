@@ -35,6 +35,8 @@ export interface Env {
   ORIGIN_FAIL_WINDOW_SECONDS?: string;
   /** Per-host modes and watch rules, JSON (see config/hosts.ts). */
   HOSTS_JSON?: string;
+  /** Mode for routed hosts missing from HOSTS_JSON (wildcard routes): gated | observe | open | off. */
+  DEFAULT_MODE?: string;
   COOKIE_DAYS?: string;
   COOKIE_DOMAIN?: string;
   ADMIN_HOSTS?: string;

@@ -424,7 +424,7 @@ describe('observe mode', () => {
   it('malformed or unknown host config falls back to gated', async () => {
     const h = harness({ HOSTS_JSON: '{not json' });
     expect((await h.run(h.request('/', { host: 'ha.example.test' }))).status).toBe(401);
-    const h2 = harness({ HOSTS_JSON: JSON.stringify({ 'ha.example.test': { mode: 'open' } }) });
+    const h2 = harness({ HOSTS_JSON: JSON.stringify({ 'ha.example.test': { mode: 'sometimes' } }) });
     expect((await h2.run(h2.request('/', { host: 'ha.example.test' }))).status).toBe(401);
   });
 });

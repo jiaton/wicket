@@ -1,6 +1,5 @@
 import { banAddress } from '../actions/ban';
-import { carriesAppCredential, hostConfig } from '../config/hosts';
-import { settings } from '../config/settings';
+import { carriesAppCredential } from '../config/hosts';
 import { apiTokens, matchToken } from '../config/tokens';
 import type { Env } from '../config/env';
 import { RecentSet, SlidingCounter } from '../core/counters';
@@ -17,6 +16,7 @@ import { observe, passthrough as appPassthrough } from './observe';
 import { signatureStrike } from './signatures';
 import { createAllowCheck } from './allow';
 import { createTrustRefresher } from '../store/trust';
+import { createRuntimeCache, hostOf } from '../runtime';
 import { html, json } from './respond';
 
 const ACME_PREFIX = '/.well-known/acme-challenge/';
@@ -43,8 +43,20 @@ export const STEPS: Step[] = [
   //    unless a challenge is pending, so this leaks nothing and keeps renewals working.
   async (c) => (c.url.pathname.startsWith(ACME_PREFIX) ? passthrough(c, 'bypass') : null),
 
-  // 5. Observe mode: the app keeps its own login; we only watch and ban.
-  async (c) => (c.host.mode === 'observe' ? observe(c) : null),
+  // 5. Hosts that are not gated: observe (forward, watch, count), open (forward untouched),
+  //    off (maintenance page). Bans above still apply to all of them.
+  async (c) => {
+    switch (c.host.mode) {
+      case 'observe':
+        return observe(c);
+      case 'open':
+        return passthrough(c, 'open');
+      case 'off':
+        return [html(messagePage('Temporarily closed', 'This host is switched off by its owner.'), 503, { 'retry-after': '600' }), 'off'];
+      default:
+        return null;
+    }
+  },
 
   // 6. Configured open prefixes (webhooks, native clients).
   async (c) => (c.cfg.bypass.some((b) => b.host === c.url.hostname && c.url.pathname.startsWith(b.prefix)) ? passthrough(c, 'bypass') : null),
@@ -107,12 +119,14 @@ export function createHandler(deps: Deps) {
   const allowCheck = createAllowCheck(deps);
   const refreshTrust = createTrustRefresher(deps.now);
   const fallbackTick = createFallbackTick(deps);
+  const runtime = createRuntimeCache(deps.now);
 
   return async function fetchHandler(req: Request, env: Env, exec: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     const started = deps.now();
     const ip = clientIp(req);
-    const cfg = settings(env);
+    const rt = await runtime.get(env);
+    const cfg = rt.settings;
     const c: Ctx = {
       req,
       url,
@@ -120,7 +134,7 @@ export function createHandler(deps: Deps) {
       cc: country(req),
       env,
       cfg,
-      host: hostConfig(env, url.hostname),
+      host: hostOf(env, rt, url.hostname),
       deps,
       exec,
       scanner,
@@ -128,6 +142,7 @@ export function createHandler(deps: Deps) {
       recentBans,
       allowed: () => allowCheck(env, cfg, ip),
       trust: () => refreshTrust(env, ip, cfg.trustSeconds, exec),
+      invalidateRuntime: runtime.invalidate,
     };
 
     let result: Result = [json({ error: 'unhandled' }, 500), 'reject'];

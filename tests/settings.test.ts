@@ -160,3 +160,55 @@ describe('/__wicket/settings', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('hosts on the settings page', () => {
+  const cookieOf = (res: Response) => (res.headers.get('set-cookie') ?? '').split(';')[0]!;
+  const post = (h: ReturnType<typeof harness>, cookie: string, fields: Record<string, string>) =>
+    h.run(h.request('/__wicket/settings', { method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'sec-fetch-site': 'same-origin' }, body: new URLSearchParams(fields) }));
+
+  it('lists hosts from wicket.yaml, adds and changes hosts live, removes and resets', async () => {
+    const h = harness({ HOSTS_JSON: JSON.stringify({ 'ha.example.test': { mode: 'observe', recipe: 'home-assistant' } }) });
+    const owner = cookieOf(await h.login('owner-pw'));
+    let page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('<b>ha.example.test</b> <small>wicket.yaml');
+    expect(page).not.toContain('Reset hosts, access and limits');
+
+    // A new gated host with the api preset, visible to the pipeline at once (same isolate: cache invalidated).
+    const add = await post(h, owner, { action: 'host.save', host: 'API.example.test', mode: 'gated', recipe: '', passthrough: 'api' });
+    expect(add.status).toBe(303);
+    expect(add.headers.get('location')).toContain('ok=host-saved');
+    expect((await h.run(h.request('/v1', { host: 'api.example.test', headers: { authorization: 'Bearer x', accept: '*/*' } }))).status).toBe(200);
+    expect(h.analytics.outcomes().at(-1)).toBe('app');
+
+    // Switch the observe host off, then open.
+    await post(h, owner, { action: 'host.save', host: 'ha.example.test', mode: 'off', recipe: '', passthrough: '' });
+    expect((await h.run(h.request('/', { host: 'ha.example.test' }))).status).toBe(503);
+    await post(h, owner, { action: 'host.save', host: 'ha.example.test', mode: 'open', recipe: '', passthrough: '' });
+    expect((await h.run(h.request('/', { host: 'ha.example.test' }))).status).toBe(200);
+    expect(h.analytics.outcomes().at(-1)).toBe('open');
+
+    page = await (await h.run(h.request('/__wicket/settings', { headers: { cookie: owner } }))).text();
+    expect(page).toContain('<b>api.example.test</b> <small>saved here');
+    expect(page).toContain('<b>ha.example.test</b> <small>saved here');
+    expect(page).toContain('Reset hosts, access and limits');
+
+    // Remove the override: wicket.yaml's observe entry applies again.
+    await post(h, owner, { action: 'host.remove', host: 'ha.example.test' });
+    expect((await h.run(h.request('/api/x', { host: 'ha.example.test', headers: { accept: '*/*' } }))).status).toBe(200);
+    expect(h.analytics.outcomes().at(-1)).toBe('observe');
+
+    await post(h, owner, { action: 'runtime.reset' });
+    expect(await h.kv.get('settings:runtime')).toBeNull();
+    expect((await h.run(h.request('/v1', { host: 'api.example.test', headers: { authorization: 'Bearer x', accept: '*/*' } }))).status).toBe(401);
+  });
+
+  it('rejects hostnames outside the cookie domain, unknown recipes and modes', async () => {
+    const h = harness();
+    const owner = cookieOf(await h.login('owner-pw'));
+    expect((await post(h, owner, { action: 'host.save', host: 'evil.other.test', mode: 'gated' })).status).toBe(400);
+    expect((await post(h, owner, { action: 'host.save', host: 'x.example.test', mode: 'observe', recipe: 'nope' })).status).toBe(400);
+    expect((await post(h, owner, { action: 'host.save', host: 'x.example.test', mode: 'sometimes' })).status).toBe(400);
+    expect((await post(h, owner, { action: 'host.remove', host: 'x.example.test' })).status).toBe(400);
+    expect(await h.kv.get('settings:runtime')).toBeNull();
+  });
+});

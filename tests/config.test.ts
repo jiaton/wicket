@@ -133,3 +133,20 @@ describe('passthrough', () => {
     expect(bad(`${minimal}\n  a.example.test: { mode: observe, passthrough: api }`)).toThrow(/only applies to mode: gated/);
   });
 });
+
+describe('routes and modes', () => {
+  it('wildcard routes need no host list; unlisted hosts get default_mode', () => {
+    const cfg = parseConfig(parse('zone: example.test\nroutes: wildcard\ndefault_mode: open\nhosts:\n  nas.example.test: gated\n  old.example.test: off'), RECIPE_NAMES);
+    expect(toRoutes(cfg)).toEqual([{ pattern: '*.example.test/*', zone: 'example.test' }]);
+    const vars = toVars(cfg);
+    expect(vars.DEFAULT_MODE).toBe('open');
+    const env = makeEnv(new FakeKV(), new FakeAnalytics(), vars);
+    expect(hostConfig(env, 'nas.example.test').mode).toBe('gated');
+    expect(hostConfig(env, 'old.example.test').mode).toBe('off');
+    expect(hostConfig(env, 'anything.example.test').mode).toBe('open');
+    expect(parseConfig(parse('zone: example.test\nroutes: wildcard'), RECIPE_NAMES).hosts).toEqual({});
+    expect(bad('zone: example.test\nroutes: everywhere\nhosts: { a.example.test: gated }')).toThrow(/routes must be/);
+    expect(bad('zone: example.test\ndefault_mode: shut\nhosts: { a.example.test: gated }')).toThrow(/default_mode/);
+    expect(bad('zone: example.test\nhosts: { a.example.test: { mode: open, passthrough: api } }')).toThrow(/passthrough only applies/);
+  });
+});

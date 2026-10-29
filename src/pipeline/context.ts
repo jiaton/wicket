@@ -20,6 +20,8 @@ export type Outcome =
   | 'preflight' // CORS OPTIONS → origin
   | 'observe' // observe-mode passthrough
   | 'app' // gated host, request carried the app's own credential → origin (pass-through rule)
+  | 'open' // open-mode host → origin untouched
+  | 'off' // host switched off → maintenance page
   | 'origin-fail' // observe-mode passthrough whose origin answer matched a watch rule
   | 'login' // password accepted
   | 'fail' // wrong password/token (not yet banned)
@@ -59,6 +61,8 @@ export interface Ctx {
   allowed: () => Promise<boolean>;
   /** Remembers that this address holds an owner session (throttled KV write). */
   trust: () => void;
+  /** Drops this isolate's cached runtime settings (after a save on the settings page). */
+  invalidateRuntime: () => void;
 }
 
 export type Result = [Response, Outcome];

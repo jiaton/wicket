@@ -10,7 +10,15 @@ export interface WatchRule {
   status: number[];
 }
 
-export type HostMode = 'gated' | 'observe';
+/**
+ * gated    password page unless a cookie, token or pass-through credential is present
+ * observe  forwarded; the app's own login is watched and scanners are banned
+ * open     forwarded untouched (bans still apply); for a host that only wants analytics
+ * off      a maintenance page, nothing forwarded
+ */
+export type HostMode = 'gated' | 'observe' | 'open' | 'off';
+export const HOST_MODES: HostMode[] = ['gated', 'observe', 'open', 'off'];
+export const isHostMode = (v: unknown): v is HostMode => typeof v === 'string' && (HOST_MODES as string[]).includes(v);
 
 /**
  * Carriers of the app's own credential. A request carrying one skips the password page and
@@ -42,11 +50,13 @@ export interface HostConfig {
   passthrough?: Passthrough;
 }
 
+export type HostTable = Record<string, HostConfig>;
+
 const GATED: HostConfig = { mode: 'gated', watch: [] };
 
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : []);
 
-function passthroughOf(raw: unknown): Passthrough | undefined {
+export function passthroughOf(raw: unknown): Passthrough | undefined {
   if (typeof raw === 'string') return PASSTHROUGH_PRESETS[raw];
   if (!raw || typeof raw !== 'object') return undefined;
   const r = raw as Record<string, unknown>;
@@ -59,22 +69,11 @@ function passthroughOf(raw: unknown): Passthrough | undefined {
   return p.headers.length || p.cookies.length || p.params.length ? p : undefined;
 }
 
-/**
- * Per-host configuration from HOSTS_JSON: `{"host": {"mode": "gated"|"observe", "recipe"?, "watch"?, "passthrough"?}}`.
- * Unknown or malformed hosts fall back to `gated`, so a typo can only make a host stricter.
- */
-export function hostConfig(env: Env, hostname: string): HostConfig {
-  if (!env.HOSTS_JSON) return GATED;
-  let all: Record<string, unknown>;
-  try {
-    all = JSON.parse(env.HOSTS_JSON) as Record<string, unknown>;
-  } catch {
-    return GATED;
-  }
-  const raw = all[hostname];
+/** One host's entry from JSON. Malformed → `gated`, so a typo can only make a host stricter. */
+export function hostEntryOf(raw: unknown): HostConfig {
   if (!raw || typeof raw !== 'object') return GATED;
   const r = raw as { mode?: unknown; recipe?: unknown; watch?: unknown; passthrough?: unknown };
-  const mode: HostMode = r.mode === 'observe' ? 'observe' : 'gated';
+  const mode: HostMode = isHostMode(r.mode) ? r.mode : 'gated';
   const watch: WatchRule[] = Array.isArray(r.watch)
     ? r.watch.filter(
         (w): w is WatchRule =>
@@ -83,6 +82,33 @@ export function hostConfig(env: Env, hostname: string): HostConfig {
     : [];
   const passthrough = mode === 'gated' ? passthroughOf(r.passthrough) : undefined;
   return { mode, recipe: typeof r.recipe === 'string' ? r.recipe : undefined, watch, ...(passthrough ? { passthrough } : {}) };
+}
+
+/** `{"host": {...}}` → table; anything unparseable → empty table. */
+export function hostTableOf(raw: unknown): HostTable {
+  let all: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      all = JSON.parse(raw);
+    } catch {
+      return {};
+    }
+  }
+  if (!all || typeof all !== 'object') return {};
+  const out: HostTable = {};
+  for (const [host, v] of Object.entries(all as Record<string, unknown>)) out[host.toLowerCase()] = hostEntryOf(v);
+  return out;
+}
+
+/** Mode for hosts that are routed but not configured (`default_mode`; `gated` unless the config says otherwise). */
+export const defaultMode = (env: Env): HostMode => (isHostMode(env.DEFAULT_MODE) ? env.DEFAULT_MODE : 'gated');
+
+export const hostFor = (table: HostTable, hostname: string, fallback: HostMode = 'gated'): HostConfig =>
+  table[hostname] ?? (fallback === 'gated' ? GATED : { mode: fallback, watch: [] });
+
+/** Per-host configuration from HOSTS_JSON alone (the deploy-time table; the runtime layer may override it). */
+export function hostConfig(env: Env, hostname: string): HostConfig {
+  return hostFor(hostTableOf(env.HOSTS_JSON), hostname, defaultMode(env));
 }
 
 export function watchMatches(rules: WatchRule[], method: string, pathname: string, status: number): boolean {

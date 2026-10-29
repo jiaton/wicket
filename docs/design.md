@@ -16,11 +16,15 @@ Every routed hostname has a mode in the config:
 
 | mode | password page | tokens | bans enforced | what is counted |
 |---|---|---|---|---|
-| `gated` | yes | yes | yes | wrong passwords/tokens, anonymous probe bursts |
+| `gated` | yes | yes | yes | wrong passwords/tokens, anonymous probe bursts; with a `passthrough` rule, the app's 401s |
 | `observe` | no (requests pass straight through) | n/a | yes | origin login failures (watch rules / recipes), 4xx probe bursts |
+| `open` | no | n/a | yes | nothing; the host is routed for analytics and bans only |
+| `off` | — (503 maintenance page) | — | yes | nothing |
 | (no route) | — | — | — | nothing; the Worker never runs |
 
 `observe` is for apps that have their own login and native clients that cannot answer a password page (Home Assistant's companion app, Immich's mobile app, a public site). The Worker still blocks banned addresses, still detects scanners, and learns about failed logins by looking at the origin's responses.
+
+Routes are `explicit` (one Workers route per listed host; hosts not listed are never touched) or `wildcard` (`*.zone/*`; hosts not listed get `default_mode`, `gated` unless the config says `open`). With wildcard routes a new hostname needs no deploy: the owner adds it on the settings page, and the entry is live everywhere within thirty seconds. Settings saved on that page (hosts, access lists, limits, notification policy) live in KV and layer over `wicket.yaml`; *Reset* returns to the file.
 
 ## Request pipeline
 

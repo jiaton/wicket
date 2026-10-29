@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse } from 'yaml';
 
-import { PASSTHROUGH_PRESETS, type Passthrough, type WatchRule } from '../src/config/hosts.ts';
+import { HOST_MODES, isHostMode, PASSTHROUGH_PRESETS, type HostMode, type Passthrough, type WatchRule } from '../src/config/hosts.ts';
 import { DEFAULT_POLICY, isDelivery, isPolicyKind, type NotifyPolicy } from '../src/config/notifications.ts';
 
 export const DEFAULT_FILE = 'wicket.yaml';
@@ -19,7 +19,7 @@ export const EXAMPLE_FILE = 'wicket.example.yaml';
 export const DEFAULT_RECONCILE_CRON = '17 * * * *';
 
 export interface HostEntry {
-  mode: 'gated' | 'observe';
+  mode: HostMode;
   recipe?: string;
   watch?: WatchRule[];
   /** Gated hosts: carriers of the app's own credential that skip the password page. */
@@ -39,6 +39,9 @@ export interface WicketConfig {
   cookieDomain: string;
   cookieDays: number;
   hosts: Record<string, HostEntry>;
+  /** `explicit`: one Workers route per listed host. `wildcard`: one route `*.zone/*`, unlisted hosts get `defaultMode`. */
+  routes: 'explicit' | 'wildcard';
+  defaultMode: HostMode;
   allowIps: string[];
   allowDns: string[];
   /** Seconds an address stays trusted after an owner login (0 = off). */
@@ -160,11 +163,11 @@ function hostEntry(v: unknown, host: string, zone: string, recipes: ReadonlySet<
   if (host !== zone && !host.endsWith(`.${zone}`)) fail(`hosts: "${host}" is not inside zone "${zone}"`);
   const r: Raw = typeof v === 'string' ? { mode: v } : v === null ? {} : isObject(v) ? v : fail(`hosts.${host} must be "gated", "observe" or a mapping`);
   const mode = r.mode ?? 'gated';
-  if (mode !== 'gated' && mode !== 'observe') fail(`hosts.${host}.mode must be "gated" or "observe"`);
+  if (!isHostMode(mode)) fail(`hosts.${host}.mode must be one of ${HOST_MODES.join(', ')}`);
   const recipe = r.recipe === undefined ? undefined : str(r.recipe, `hosts.${host}.recipe`);
   if (recipe && recipes && !recipes.has(recipe)) fail(`hosts.${host}.recipe: unknown recipe "${recipe}" (known: ${[...recipes].join(', ')})`);
-  if (mode === 'gated' && (recipe || r.watch !== undefined)) fail(`hosts.${host}: recipe/watch only apply to mode: observe`);
-  if (mode === 'observe' && r.passthrough !== undefined) fail(`hosts.${host}: passthrough only applies to mode: gated (observe hosts already forward everything)`);
+  if (mode !== 'observe' && (recipe || r.watch !== undefined)) fail(`hosts.${host}: recipe/watch only apply to mode: observe`);
+  if (mode !== 'gated' && r.passthrough !== undefined) fail(`hosts.${host}: passthrough only applies to mode: gated (other modes already forward everything or nothing)`);
   const watch = watchRules(r.watch, host);
   const passthrough = passthroughRule(r.passthrough, host);
   return { mode, ...(recipe ? { recipe } : {}), ...(watch?.length ? { watch } : {}), ...(passthrough ? { passthrough } : {}) };
@@ -198,9 +201,15 @@ export function parseConfig(doc: unknown, recipes: ReadonlySet<string> | null = 
   const zone = str(doc.zone, 'zone').toLowerCase();
   if (!HOSTNAME.test(zone)) fail(`zone "${zone}" is not a valid domain`);
 
-  if (!isObject(doc.hosts) || !Object.keys(doc.hosts).length) fail('hosts must list at least one hostname');
+  const routes = str(doc.routes, 'routes', 'explicit');
+  if (routes !== 'explicit' && routes !== 'wildcard') fail('routes must be "explicit" (one route per host) or "wildcard" (*.zone/*)');
+  const defaultMode = str(doc.default_mode, 'default_mode', 'gated');
+  if (!isHostMode(defaultMode)) fail(`default_mode must be one of ${HOST_MODES.join(', ')}`);
+  const hostsDoc = doc.hosts === undefined || doc.hosts === null ? {} : doc.hosts;
+  if (!isObject(hostsDoc)) fail('hosts must be a mapping of hostnames');
+  if (!Object.keys(hostsDoc).length && routes !== 'wildcard') fail('hosts must list at least one hostname (or set routes: wildcard)');
   const hosts: Record<string, HostEntry> = {};
-  for (const [host, v] of Object.entries(doc.hosts)) hosts[host.toLowerCase()] = hostEntry(v, host.toLowerCase(), zone, recipes);
+  for (const [host, v] of Object.entries(hostsDoc)) hosts[host.toLowerCase()] = hostEntry(v, host.toLowerCase(), zone, recipes);
 
   const limits = isObject(doc.limits) ? doc.limits : {};
   const rotating = isObject(limits.rotating) ? limits.rotating : {};
@@ -235,6 +244,8 @@ export function parseConfig(doc: unknown, recipes: ReadonlySet<string> | null = 
     cookieDomain: str(doc.cookie_domain, 'cookie_domain', zone),
     cookieDays: num(doc.cookie_days, 'cookie_days', 365),
     hosts,
+    routes,
+    defaultMode,
     allowIps: strings(doc.allow_ips, 'allow_ips'),
     allowDns: strings(doc.allow_dns, 'allow_dns').map((n) => {
       const name = n.toLowerCase();
@@ -346,6 +357,7 @@ export function toVars(cfg: WicketConfig): Record<string, string> {
   for (const [host, h] of Object.entries(cfg.hosts)) {
     if (h.mode === 'observe') hostsJson[host] = { mode: 'observe', ...(h.recipe ? { recipe: h.recipe } : {}), ...(h.watch ? { watch: h.watch } : {}) };
     else if (h.passthrough) hostsJson[host] = { mode: 'gated', passthrough: h.passthrough };
+    else if (h.mode !== 'gated' || cfg.defaultMode !== 'gated') hostsJson[host] = { mode: h.mode };
   }
   return {
     ALLOW_IPS: cfg.allowIps.join(','),
@@ -367,6 +379,7 @@ export function toVars(cfg: WicketConfig): Record<string, string> {
     ORIGIN_FAIL_LIMIT: String(cfg.limits.origin.count),
     ORIGIN_FAIL_WINDOW_SECONDS: String(cfg.limits.origin.window),
     HOSTS_JSON: JSON.stringify(hostsJson),
+    DEFAULT_MODE: cfg.defaultMode,
     COOKIE_DAYS: String(cfg.cookieDays),
     COOKIE_DOMAIN: cfg.cookieDomain,
     ADMIN_HOSTS: cfg.alerts.adminHosts.join(','),
@@ -384,6 +397,7 @@ export function toVars(cfg: WicketConfig): Record<string, string> {
 
 /** One Workers route per host; the Worker only runs where it is routed. */
 export function toRoutes(cfg: WicketConfig): { pattern: string; zone: string }[] {
+  if (cfg.routes === 'wildcard') return [{ pattern: `*.${cfg.zone}/*`, zone: cfg.zone }];
   return Object.keys(cfg.hosts).map((host) => ({ pattern: `${host}/*`, zone: cfg.zone }));
 }
 

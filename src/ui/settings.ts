@@ -1,5 +1,13 @@
+import { HOST_MODES, type HostMode } from '../config/hosts';
 import { DIGEST_CHOICES, KIND_LABELS, POLICY_KINDS, type Delivery, type NotifyPolicy } from '../config/notifications';
 import type { BanKind } from '../store/bans';
+
+const MODE_HINTS: Record<HostMode, string> = {
+  gated: 'password page',
+  observe: 'app keeps its login, watched',
+  open: 'forwarded untouched',
+  off: 'maintenance page',
+};
 import { brand, page } from './pages';
 
 const esc = (s: string) =>
@@ -22,10 +30,28 @@ export interface BanRow {
   at: number;
 }
 
+export interface HostRow {
+  host: string;
+  mode: HostMode;
+  recipe: string;
+  /** '' = none, a preset name, or 'custom' (a mapping from wicket.yaml). */
+  passthrough: string;
+  watchRules: number;
+  /** Where the effective entry comes from. */
+  source: 'config' | 'saved';
+}
+
 export interface SettingsView {
   host: string;
   action: string;
   logout: string;
+  /** Every configured host, deploy-time and runtime, sorted. */
+  hosts: HostRow[];
+  recipes: string[];
+  passthroughPresets: string[];
+  defaultMode: HostMode;
+  /** True when any runtime override (hosts, access, limits) is saved. */
+  runtimeOverridden: boolean;
   policy: NotifyPolicy;
   source: 'defaults' | 'config' | 'saved';
   /** Channels in use with their thresholds and digest queues; secrets never reach the page. */
@@ -102,10 +128,36 @@ export function settingsPage(v: SettingsView): string {
     : '<tr><td><small>No bans.</small></td><td></td></tr>';
   const total = Object.values(v.banCounts).reduce((a, b) => a + (b ?? 0), 0);
 
+  const modeOptions: [string, string][] = HOST_MODES.map((m) => [m, `${m} — ${MODE_HINTS[m]}`]);
+  const recipeOptions: [string, string][] = [['', 'no recipe'], ...v.recipes.map((r): [string, string] => [r, r])];
+  const passthroughOptions = (current: string): [string, string][] => [
+    ['', 'none'],
+    ...v.passthroughPresets.map((p): [string, string] => [p, `${p} (app's own tokens reach the app)`]),
+    ...(current === 'custom' ? [['custom', 'custom (from wicket.yaml)'] as [string, string]] : []),
+  ];
+  const hostRows = v.hosts.length
+    ? v.hosts
+        .map(
+          (h) =>
+            `<tr><td><form method="post" action="${esc(v.action)}" class="hostrow"><input type="hidden" name="host" value="${esc(h.host)}">` +
+            `<b>${esc(h.host)}</b> <small>${h.source === 'saved' ? 'saved here' : 'wicket.yaml'}${h.watchRules ? ` · ${h.watchRules} watch rule${h.watchRules === 1 ? '' : 's'}` : ''}</small><br>` +
+            `${select('mode', modeOptions, h.mode)} ${select('recipe', recipeOptions, h.recipe)} ${select('passthrough', passthroughOptions(h.passthrough), h.passthrough)}` +
+            `<span class="actions"><button type="submit" name="action" value="host.save" class="small">Save</button>` +
+            `${h.source === 'saved' ? `<button type="submit" name="action" value="host.remove" class="secondary small">Remove</button>` : ''}</span></form></td></tr>`,
+        )
+        .join('')
+    : '<tr><td><small>No hosts configured; every routed host gets the default mode.</small></td></tr>';
+
   return page(
     'wicket · settings',
     `<div class="head">${brand('wicket · settings')}<a href="${esc(v.logout)}">Sign out</a></div>
 <p>Signed in as owner on ${esc(v.host)}. Settings apply to every host.</p>
+
+<h2>Hosts</h2>
+<p><small>Mode, recipe and pass-through per host. Changes are live within 30 s; a host must also be routed to the Worker (its own route in wicket.yaml, or <code>routes: wildcard</code>). Unlisted routed hosts are <b>${esc(v.defaultMode)}</b>.${v.runtimeOverridden ? ' Entries marked <i>saved here</i> override wicket.yaml until removed or reset.' : ''}</small></p>
+<table class="hosts">${hostRows}</table>
+<form method="post" action="${esc(v.action)}" class="hostrow add"><input name="host" placeholder="new.host.example.com" aria-label="hostname" required pattern="[A-Za-z0-9.-]+">${select('mode', modeOptions, 'gated')} ${select('recipe', recipeOptions, '')} ${select('passthrough', passthroughOptions(''), '')}<button type="submit" name="action" value="host.save" class="small">Add host</button></form>
+${v.runtimeOverridden ? `<form method="post" action="${esc(v.action)}" class="inline"><button type="submit" name="action" value="runtime.reset" class="secondary small">Reset hosts, access and limits to wicket.yaml</button></form>` : ''}
 
 <h2>Status</h2>
 <table>

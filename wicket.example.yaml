@@ -23,6 +23,12 @@ zone: example.com
 #            to the app, which validates it; its 401s count as failed logins. `api` = the
 #            Authorization, X-API-Key and x-access-token headers and ?token=; or a mapping
 #            with headers / cookies / params / paths. wicket stores no app tokens.
+#   open     forwarded untouched (bans still apply); off: a maintenance page, nothing forwarded.
+# Hosts can also be added or changed on /__wicket/settings without a redeploy.
+#
+# routes: explicit        # one Workers route per host below (default)
+# routes: wildcard        # one route *.example.com/*; hosts not listed get default_mode
+# default_mode: gated     # wildcard only: gated | observe | open | off
 hosts:
   nas.example.com: gated
   docker.example.com: gated

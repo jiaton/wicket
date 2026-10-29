@@ -6,10 +6,14 @@ import { safeEqual, signSession, signUnban, verifySession, type Role } from '../
 import { emit, queueStatus } from '../notify';
 import { resolvePolicy } from '../notify/policy';
 import { clearBan, clearFailures, isBanned, isLockedDown, liftLockdown, listBans, LOCKDOWN_IP, readBan, readLockdown, type BanKind } from '../store/bans';
-import { clearNotifySettings, writeNotifySettings } from '../store/settings';
+import { clearNotifySettings, clearRuntimeSettings, readRuntimeSettings, writeNotifySettings, writeRuntimeSettings } from '../store/settings';
+import { defaultMode, hostTableOf, isHostMode, PASSTHROUGH_PRESETS } from '../config/hosts';
+import { runtimeOverridesOf } from '../config/runtime';
+import { RECIPES } from '../recipes';
+import { resolveRuntime } from '../runtime';
 import { isTrusted, markTrusted } from '../store/trust';
 import { loginPage, messagePage } from '../ui/pages';
-import { settingsPage, type BanRow } from '../ui/settings';
+import { settingsPage, type BanRow, type HostRow } from '../ui/settings';
 import type { Ctx, Result } from './context';
 import { registerFailure } from './failures';
 import { html } from './respond';
@@ -130,6 +134,14 @@ async function settings(c: Ctx): Promise<Result> {
     } else if (action === 'lift') {
       await liftLockdownAndTell(c, `from the settings page by ${c.ip}`);
       notice = 'lifted';
+    } else if (action === 'host.save' || action === 'host.remove') {
+      const result = await saveHost(c, action, form);
+      if (result !== 'ok') return [html(messagePage('Not saved', result), 400), 'admin'];
+      notice = action === 'host.save' ? 'host-saved' : 'host-removed';
+    } else if (action === 'runtime.reset') {
+      await clearRuntimeSettings(c.env);
+      c.invalidateRuntime();
+      notice = 'runtime-reset';
     } else {
       const base = mergePolicy(DEFAULT_POLICY, c.env.NOTIFY_POLICY_JSON);
       const kinds = { ...base.kinds };
@@ -143,7 +155,18 @@ async function settings(c: Ctx): Promise<Result> {
     return [new Response(null, { status: 303, headers: { location: `${c.url.origin}${SETTINGS_PATH}?ok=${notice}`, 'cache-control': 'no-store' } }), 'admin'];
   }
 
-  const [policy, queues, lockdown, bans] = await Promise.all([resolvePolicy(c.env), queueStatus(c.env, now), readLockdown(c.env), listBans(c.env)]);
+  const [policy, queues, lockdown, bans, rt] = await Promise.all([resolvePolicy(c.env), queueStatus(c.env, now), readLockdown(c.env), listBans(c.env), resolveRuntime(c.env)]);
+  const savedHosts = new Set(Object.keys(rt.overrides.hosts ?? {}).map((h) => h.toLowerCase()));
+  const hostRows: HostRow[] = Object.entries(rt.hosts)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([host, h]) => ({
+      host,
+      mode: h.mode,
+      recipe: h.recipe ?? '',
+      passthrough: h.passthrough ? (Object.entries(PASSTHROUGH_PRESETS).find(([, p]) => JSON.stringify(p) === JSON.stringify(h.passthrough))?.[0] ?? 'custom') : '',
+      watchRules: h.watch.length,
+      source: savedHosts.has(host) ? 'saved' : 'config',
+    }));
   const banCounts: Partial<Record<BanKind | 'unknown', number>> = {};
   for (const b of bans) banCounts[b.kind ?? 'unknown'] = (banCounts[b.kind ?? 'unknown'] ?? 0) + 1;
   // Newest first from the key metadata; records are only read for the page shown, and only
@@ -159,14 +182,28 @@ async function settings(c: Ctx): Promise<Result> {
   );
   const pages = Math.max(1, Math.ceil(ordered.length / RECENT_BANS));
   const ok = c.url.searchParams.get('ok');
-  const notice =
-    ok === 'saved' ? 'Saved. Applies to the next event.' : ok === 'reset' ? 'Reset to the deploy-time config.' : ok === 'test' ? 'Test message sent to every channel.' : ok === 'unbanned' ? 'Unbanned.' : ok === 'lifted' ? 'Lockdown lifted.' : undefined;
+  const NOTICES: Record<string, string> = {
+    saved: 'Saved. Applies to the next event.',
+    reset: 'Reset to the deploy-time config.',
+    test: 'Test message sent to every channel.',
+    unbanned: 'Unbanned.',
+    lifted: 'Lockdown lifted.',
+    'host-saved': 'Host saved. Live on every data centre within 30 s.',
+    'host-removed': 'Host entry removed; wicket.yaml (or the default mode) applies again.',
+    'runtime-reset': 'Hosts, access and limits reset to wicket.yaml.',
+  };
+  const notice = ok ? NOTICES[ok] : undefined;
   return [
     html(
       settingsPage({
         host: c.url.hostname,
         action: SETTINGS_PATH,
         logout: `${ENDPOINT_PREFIX}logout`,
+        hosts: hostRows,
+        recipes: Object.keys(RECIPES),
+        passthroughPresets: Object.keys(PASSTHROUGH_PRESETS),
+        defaultMode: defaultMode(c.env),
+        runtimeOverridden: rt.overridden,
         policy,
         source: policy.source,
         channels: queues,
@@ -184,6 +221,50 @@ async function settings(c: Ctx): Promise<Result> {
     ),
     'admin',
   ];
+}
+
+const HOSTNAME = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;
+
+/**
+ * Hosts section: `host.save` writes one entry into the runtime overrides (replacing the
+ * wicket.yaml entry for that host, or adding a host), `host.remove` drops the override.
+ * Returns 'ok' or a message for the owner. The whole overrides document is one KV key, so a
+ * save is one read and one write.
+ */
+async function saveHost(c: Ctx, action: 'host.save' | 'host.remove', form: FormData | null): Promise<string> {
+  const host = String(form?.get('host') ?? '').trim().toLowerCase();
+  if (!HOSTNAME.test(host)) return `"${host}" is not a valid hostname.`;
+  if (c.cfg.cookieDomain && host !== c.cfg.cookieDomain && !host.endsWith(`.${c.cfg.cookieDomain}`)) return `"${host}" is not under ${c.cfg.cookieDomain}.`;
+  const doc = runtimeOverridesOf(await readRuntimeSettings(c.env));
+  const hosts: Record<string, unknown> = { ...(doc.hosts ?? {}) };
+  if (action === 'host.remove') {
+    if (!(host in hosts)) return `${host} has no saved entry.`;
+    delete hosts[host];
+  } else {
+    const mode = String(form?.get('mode') ?? 'gated');
+    if (!isHostMode(mode)) return `Unknown mode "${mode}".`;
+    const recipe = String(form?.get('recipe') ?? '');
+    if (recipe && !(recipe in RECIPES)) return `Unknown recipe "${recipe}".`;
+    const passthrough = String(form?.get('passthrough') ?? '');
+    const entry: Record<string, unknown> = { mode };
+    if (mode === 'observe' && recipe) entry.recipe = recipe;
+    if (mode === 'gated' && passthrough) {
+      if (passthrough === 'custom') {
+        // Keep the mapping from wicket.yaml (the page cannot edit it): copy the compiled rule.
+        const current = hostTableOf(c.env.HOSTS_JSON)[host]?.passthrough;
+        if (!current) return `${host} has no custom pass-through rule in wicket.yaml to keep.`;
+        entry.passthrough = current;
+      } else if (passthrough in PASSTHROUGH_PRESETS) entry.passthrough = passthrough;
+      else return `Unknown pass-through preset "${passthrough}".`;
+    }
+    // Watch rules from wicket.yaml survive a mode/recipe change made here.
+    const watch = hostTableOf(c.env.HOSTS_JSON)[host]?.watch;
+    if (mode === 'observe' && watch?.length) entry.watch = watch;
+    hosts[host] = entry;
+  }
+  await writeRuntimeSettings(c.env, { ...doc, hosts });
+  c.invalidateRuntime();
+  return 'ok';
 }
 
 /** Clears a ban in KV and the IP list and tells the channels; shared by the link and the page. */
